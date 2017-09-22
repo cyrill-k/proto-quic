@@ -172,7 +172,19 @@ public:
 // Class for parsing and constructing QUIC packets.  It has a
 // QuicFramerVisitorInterface that is called when packets are parsed.
 class QUIC_EXPORT_PRIVATE QuicFramer {
- public:
+public:
+
+  // Interface which gets callbacks from the QuicFramer when a packet is
+  // received. Implementations must not mutate the state of the packet
+  // creator as a result of these callbacks.
+  class QUIC_EXPORT_PRIVATE LoggingDelegate {
+   public:
+    virtual ~LoggingDelegate() {}
+
+    // Called when a packet with an associated packet number was received.
+    virtual void OnPacketReceived(QuicPacketNumber packetNumber, QuicPacketLength packetLength) = 0;
+  };
+
   // Constructs a new framer that installs a kNULL QuicEncrypter and
   // QuicDecrypter for level ENCRYPTION_NONE. |supported_versions| specifies the
   // list of supported QUIC versions. |quic_version_| is set to the maximum
@@ -200,6 +212,10 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
   // to do nothing.  If this is called multiple times, only the last visitor
   // will be used.
   void set_visitor(QuicFramerVisitorInterface* visitor) { visitor_ = visitor; }
+
+  void set_logging_visitor(LoggingDelegate* loggingDelegate) {
+    logging_delegate_ = loggingDelegate;
+  }
 
   const QuicVersionVector& supported_versions() const {
     return supported_versions_;
@@ -571,6 +587,8 @@ class QUIC_EXPORT_PRIVATE QuicFramer {
   QuicTime::Delta last_timestamp_;
   // The diversification nonce from the last received packet.
   DiversificationNonce last_nonce_;
+  // Receives callbacks whenever a packet was received (not owned).
+  LoggingDelegate* logging_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicFramer);
 };

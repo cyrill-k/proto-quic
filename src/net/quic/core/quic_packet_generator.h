@@ -75,7 +75,8 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
                       QuicFramer* framer,
                       QuicRandom* random_generator,
                       QuicBufferAllocator* buffer_allocator,
-                      DelegateInterface* delegate);
+                      DelegateInterface* delegate,
+                      QuicPacketCreator::LoggingDelegate* logging_delegate);
 
   ~QuicPacketGenerator();
 

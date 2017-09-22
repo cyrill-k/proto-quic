@@ -31,7 +31,8 @@ namespace net {
 QuicPacketCreator::QuicPacketCreator(QuicConnectionId connection_id,
                                      QuicFramer* framer,
                                      QuicBufferAllocator* buffer_allocator,
-                                     DelegateInterface* delegate)
+                                     DelegateInterface* delegate,
+                                     LoggingDelegate* loggingDelegate)
     : delegate_(delegate),
       debug_delegate_(nullptr),
       framer_(framer),
@@ -47,7 +48,8 @@ QuicPacketCreator::QuicPacketCreator(QuicConnectionId connection_id,
       latched_flag_no_stop_waiting_frames_(
           FLAGS_quic_reloadable_flag_quic_no_stop_waiting_frames),
       pending_padding_bytes_(0),
-      needs_full_padding_(false) {
+      needs_full_padding_(false),
+      logging_delegate_(loggingDelegate) {
   SetMaxPacketLength(kDefaultMaxPacketSize);
 }
 
@@ -638,6 +640,9 @@ bool QuicPacketCreator::AddFrame(const QuicFrame& frame,
   }
   if (debug_delegate_ != nullptr) {
     debug_delegate_->OnFrameAddedToPacket(frame);
+  }
+  if(logging_delegate_ != nullptr) {
+    logging_delegate_->OnFrameAddedToPacket(frame, frame_len);
   }
 
   return true;

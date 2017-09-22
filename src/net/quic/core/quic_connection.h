@@ -184,6 +184,32 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
   virtual void OnAckFrameUpdated(QuicConnection* connection) = 0;
 };
 
+// Class that receives callbacks from the connection whenever events happen that should
+// be logged.
+class QUIC_EXPORT_PRIVATE QuicConnectionLoggingInterface {
+ public:
+  virtual ~QuicConnectionLoggingInterface() {}
+
+  // A packet was sent on this connection.
+  virtual void OnPacketSent(QuicConnection* connection, QuicPacketNumber packetNumber,
+      QuicPacketLength packetLength) = 0;
+
+  // A packet was received on this connection.
+  virtual void OnPacketReceived(QuicConnection* connection, QuicPacketNumber packetNumber,
+      QuicPacketLength packetLength) = 0;
+
+  // A lost packet was detected on this connection.
+  virtual void OnPacketLost(QuicConnection* connection, QuicPacketNumber packetNumber,
+      QuicPacketLength packetLength, TransmissionType transmissionType) = 0;
+
+  // An ACK frame was sent on this connection (not necessarily acking packets of this connection).
+  virtual void OnAckSent(QuicConnection* connection, QuicPacketLength ackLength) = 0;
+
+  // A packet was acked on this connection.
+  virtual void OnAckReceived(QuicConnection* connection, QuicPacketNumber packetNumber,
+      QuicPacketLength packetLength, QuicTime::Delta ackDelayTime, QuicTime::Delta rtt) = 0;
+};
+
 // Interface which gets callbacks from the QuicConnection at interesting
 // points.  Implementations must not mutate the state of the connection
 // as a result of these callbacks.
@@ -309,10 +335,13 @@ class QUIC_EXPORT_PRIVATE QuicConnectionHelperInterface {
 
 class QUIC_EXPORT_PRIVATE QuicConnection
     : public QuicFramerVisitorInterface,
+      public QuicFramer::LoggingDelegate,
       public QuicBlockedWriterInterface,
       public QuicPacketGenerator::DelegateInterface,
+      public QuicPacketCreator::LoggingDelegate,
       public QuicSentPacketManager::NetworkChangeVisitor,
       public QuicSentPacketManager::RetransmissionVisitor,
+      public QuicSentPacketManager::LoggingDelegate,
       public QuicReceivedPacketManagerVisitor {
  public:
   enum AckBundling {
@@ -552,6 +581,12 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   // From RetransmissionVisitor
   void OnRetransmission(const QuicTransmissionInfo& transmission_info) override;
 
+  // From SentPacketManager::LoggingDelegate
+  void OnPacketAcknowledged(QuicPacketNumber packetNumber,
+      QuicPacketLength packetLength, QuicTime::Delta ackDelayTime, QuicTime::Delta rtt) override;
+  void OnPacketLost(QuicPacketNumber packetNumber, QuicPacketLength packetLength,
+      TransmissionType transmissionType) override;
+
   // From QuicFramerVisitorInterface
   void OnError(QuicFramer* framer) override;
   bool OnProtocolVersionMismatch(QuicVersion received_version) override;
@@ -578,6 +613,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   bool OnSubflowCloseFrame(const QuicSubflowCloseFrame& frame) override;
   void OnPacketComplete() override;
 
+  // From QuicFramer::LoggingDelegate
+  void OnPacketReceived(QuicPacketNumber packetNumber, QuicPacketLength packetLength) override;
+
   // QuicConnectionCloseDelegateInterface
   void OnUnrecoverableError(QuicErrorCode error,
                             const std::string& error_details,
@@ -591,6 +629,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection
 
   // QuicPacketCreator::DelegateInterface
   void OnSerializedPacket(SerializedPacket* packet) override;
+  void OnFrameAddedToPacket(const QuicFrame& frame, QuicByteCount frameLength) override;
 
   // QuicSentPacketManager::NetworkChangeVisitor
   void OnCongestionChange() override;
@@ -612,6 +651,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   void set_debug_visitor(QuicConnectionDebugVisitor* debug_visitor) {
     debug_visitor_ = debug_visitor;
     sent_packet_manager_.SetDebugDelegate(debug_visitor);
+  }
+  void set_logging_visitor(QuicConnectionLoggingInterface* logging_visitor) {
+    logging_interface_ = logging_visitor;
   }
   // Used in Chromium, but not internally.
   // Must only be called before ping_alarm_ is set.
@@ -1248,6 +1290,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
 
   // largest observed delay from the last ACK frame.
   QuicTime::Delta largest_observed_last_delay_;
+
+  // Sends events to the connection manager class that should be logged (not owned).
+  QuicConnectionLoggingInterface* logging_interface_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnection);
 };

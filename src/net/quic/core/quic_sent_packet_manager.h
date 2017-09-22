@@ -70,6 +70,20 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   };
 
   // Interface which gets callbacks from the QuicSentPacketManager when
+  // events that should be logged happen. Implementations must not mutate
+  // the state of the packet manager as a result of these callbacks.
+  class QUIC_EXPORT_PRIVATE LoggingDelegate {
+     public:
+      virtual ~LoggingDelegate() {}
+
+      virtual void OnPacketAcknowledged(QuicPacketNumber packetNumber,
+          QuicPacketLength packetLength, QuicTime::Delta ackDelayTime, QuicTime::Delta rtt) = 0;
+
+      virtual void OnPacketLost(QuicPacketNumber packetNumber, QuicPacketLength packetLength,
+          TransmissionType transmissionType) = 0;
+    };
+
+  // Interface which gets callbacks from the QuicSentPacketManager when
   // network-related state changes. Implementations must not mutate the
   // state of the packet manager as a result of these callbacks.
   class QUIC_EXPORT_PRIVATE NetworkChangeVisitor {
@@ -100,7 +114,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
                         CongestionControlType congestion_control_type,
                         LossDetectionType loss_type,
                         QuicSubflowDescriptor descriptor,
-                        MultipathSendAlgorithmInterface* sendAlgorithm);
+                        MultipathSendAlgorithmInterface* sendAlgorithm,
+                        LoggingDelegate* loggingDelegate);
   virtual ~QuicSentPacketManager();
 
   void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* sendAlgorithm);
@@ -271,7 +286,7 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   void UpdatePacketInformationReceivedByPeer(const QuicAckFrame& ack_frame);
 
   // Process the incoming ack looking for newly ack'd data packets.
-  void HandleAckForSentPackets(const QuicAckFrame& ack_frame);
+  void HandleAckForSentPackets(const QuicAckFrame& ack_frame, QuicTime ack_receive_time);
 
   // Returns the current retransmission mode.
   RetransmissionTimeoutMode GetRetransmissionMode() const;
@@ -319,7 +334,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   // |info| due to receipt by the peer.
   void MarkPacketHandled(QuicPacketNumber packet_number,
                          QuicTransmissionInfo* info,
-                         QuicTime::Delta ack_delay_time);
+                         QuicTime::Delta ack_delay_time,
+                         QuicTime ack_receive_time);
 
   // Request that |packet_number| be retransmitted after the other pending
   // retransmissions.  Does not add it to the retransmissions if it's already
@@ -432,6 +448,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   RetransmissionVisitor* retransmission_visitor_;
 
   QuicSubflowDescriptor subflow_descriptor_;
+
+  LoggingDelegate* logging_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicSentPacketManager);
 };

@@ -1269,6 +1269,8 @@ component("net") {
       "quic/core/quic_connection.cc",
       "quic/core/quic_connection.h",
       "quic/core/quic_connection_close_delegate_interface.h",
+      "quic/core/quic_connection_manager_logger.cc",
+      "quic/core/quic_connection_manager_logger.h",
       "quic/core/quic_connection_manager.cc",
       "quic/core/quic_connection_manager.h",
       "quic/core/quic_connection_stats.cc",

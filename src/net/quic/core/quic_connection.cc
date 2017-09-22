@@ -253,13 +253,14 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
                         framer_,
                         random_generator_,
                         helper->GetBufferAllocator(),
+                        this,
                         this),
       idle_network_timeout_(QuicTime::Delta::Infinite()),
       handshake_timeout_(QuicTime::Delta::Infinite()),
       time_of_last_received_packet_(clock_->ApproximateNow()),
       time_of_last_sent_new_packet_(clock_->ApproximateNow()),
       last_send_for_timeout_(clock_->ApproximateNow()),
-      sent_packet_manager_(perspective, clock_, &stats_, kCubicBytes, kNack, QuicSubflowDescriptor(self_address,peer_address), sendAlgorithm),
+      sent_packet_manager_(perspective, clock_, &stats_, kCubicBytes, kNack, QuicSubflowDescriptor(self_address,peer_address), sendAlgorithm, this),
       version_negotiation_state_(START_NEGOTIATION),
       perspective_(perspective),
       connected_(true),
@@ -275,7 +276,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
       subflow_state_(SUBFLOW_OPEN_INITIATED),
       subflow_id_(subflow_id),
       last_sent_unencrypted_packet_number_(std::numeric_limits<QuicPacketNumber>::max()),
-      largest_observed_last_delay_(QuicTime::Delta::Zero()) {
+      largest_observed_last_delay_(QuicTime::Delta::Zero()),
+      logging_interface_(nullptr) {
   QUIC_DLOG(INFO) << ENDPOINT
                   << "Created connection with connection_id: " << connection_id;
   framer_->set_visitor(this);
@@ -296,6 +298,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
 
   // Set the subflow id field in the ACK packet
   received_packet_manager_.SetSubflowId(subflow_id_);
+
+  framer_->set_logging_visitor(this);
 
   // Create a connection for a subflow without exchanging handshake messages
   // using a previously established crypto context.
@@ -588,6 +592,20 @@ bool QuicConnection::SelectMutualVersion(
 void QuicConnection::OnRetransmission(const QuicTransmissionInfo& transmission_info) {
   if(visitor_) {
     visitor_->OnRetransmission(this, transmission_info);
+  }
+}
+
+void QuicConnection::OnPacketAcknowledged(QuicPacketNumber packetNumber,
+    QuicPacketLength packetLength, QuicTime::Delta ackDelayTime, QuicTime::Delta rtt) {
+  if(logging_interface_ != nullptr) {
+    logging_interface_->OnAckReceived(this, packetNumber, packetLength, ackDelayTime, rtt);
+  }
+}
+
+void QuicConnection::OnPacketLost(QuicPacketNumber packetNumber, QuicPacketLength packetLength,
+    TransmissionType transmissionType) {
+  if(logging_interface_ != nullptr) {
+    logging_interface_->OnPacketLost(this, packetNumber, packetLength, transmissionType);
   }
 }
 
@@ -1093,6 +1111,12 @@ void QuicConnection::OnPacketComplete() {
   ClearLastFrames();
 }
 
+void QuicConnection::OnPacketReceived(QuicPacketNumber packetNumber, QuicPacketLength packetLength) {
+  if(logging_interface_ != nullptr) {
+    logging_interface_->OnPacketReceived(this, packetNumber, packetLength);
+  }
+}
+
 void QuicConnection::MaybeQueueAck(bool was_missing) {
   ++num_packets_received_since_last_ack_sent_;
   // Always send an ack every 20 packets in order to allow the peer to discard
@@ -1163,7 +1187,6 @@ void QuicConnection::ClearLastFrames() {
 }
 
 const QuicFrames QuicConnection::GetUpdatedAckFrames() {
-  //TODO(cyrill) call visitor and collect all updated ack frames.
   if(visitor_) {
     return visitor_->GetUpdatedAckFrames(this);
   }
@@ -1740,6 +1763,10 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
     debug_visitor_->OnPacketSent(*packet, packet->original_packet_number,
                                  packet->transmission_type, packet_send_time);
   }
+  if (result.status != WRITE_STATUS_ERROR && logging_interface_ != nullptr) {
+    // Pass the write result to the visitor.
+    logging_interface_->OnPacketSent(this, packet->packet_number, packet->encrypted_length);
+  }
   if (packet->transmission_type == NOT_RETRANSMISSION) {
     time_of_last_sent_new_packet_ = packet_send_time;
   }
@@ -1861,6 +1888,12 @@ void QuicConnection::OnSerializedPacket(SerializedPacket* serialized_packet) {
   }
 
   SendOrQueuePacket(serialized_packet);
+}
+
+void QuicConnection::OnFrameAddedToPacket(const QuicFrame& frame, QuicByteCount frameLength) {
+  if(logging_interface_ != nullptr && frame.type == ACK_FRAME) {
+    logging_interface_->OnAckSent(this, frameLength);
+  }
 }
 
 void QuicConnection::OnUnrecoverableError(QuicErrorCode error,

@@ -19,10 +19,12 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
         std::map<QuicSubflowId, QuicConnection*>()), next_outgoing_subflow_id_(
         connection->perspective() == Perspective::IS_SERVER ? 2 : 3), current_subflow_id_(
         kInitialSubflowId), next_subflow_id_(0), multipath_send_algorithm_(
-        new OliaSendAlgorithm(new RoundRobinAlgorithm())) {
+        new OliaSendAlgorithm(new RoundRobinAlgorithm())),
+        logger_(new QuicConnectionManagerLogger("test.out", connection->clock())) {
   connection->SetMultipathSendAlgorithm(GetSendAlgorithm());
   AddConnection(connection->SubflowDescriptor(), kInitialSubflowId, connection);
   connection->set_visitor(this);
+  connection->set_logging_visitor(logger_.get());
 }
 
 QuicConnectionManager::~QuicConnectionManager() {
@@ -250,6 +252,7 @@ void QuicConnectionManager::OpenConnection(QuicSubflowDescriptor descriptor,
   QuicConnection *connection = InitialConnection()->CloneToSubflow(descriptor,
       GetPacketWriter(descriptor), false, 0, GetSendAlgorithm());
   connection->set_visitor(this);
+  connection->set_logging_visitor(logger_.get());
   connection->SetSubflowState(QuicConnection::SUBFLOW_OPEN_INITIATED);
   QUIC_LOG(INFO) << "test";
   AddUnassignedConnection(descriptor, connection);

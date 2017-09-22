@@ -41,6 +41,18 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
     virtual void OnSerializedPacket(SerializedPacket* serialized_packet) = 0;
   };
 
+  // Interface which gets callbacks from the QuicPacketCreator when
+  // events that should be logged happen. Implementations must not mutate
+  // the state of the packet creator as a result of these callbacks.
+  class QUIC_EXPORT_PRIVATE LoggingDelegate {
+     public:
+      virtual ~LoggingDelegate() {}
+
+      // Called when a frame has been added to the current packet. Only used for
+      // logging purposes.
+      virtual void OnFrameAddedToPacket(const QuicFrame& frame, QuicByteCount frameLength) = 0;
+    };
+
   // Interface which gets callbacks from the QuicPacketCreator at interesting
   // points.  Implementations must not mutate the state of the creator
   // as a result of these callbacks.
@@ -55,7 +67,8 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   QuicPacketCreator(QuicConnectionId connection_id,
                     QuicFramer* framer,
                     QuicBufferAllocator* buffer_allocator,
-                    DelegateInterface* delegate);
+                    DelegateInterface* delegate,
+                    LoggingDelegate* loggingDelegate);
 
   ~QuicPacketCreator();
 
@@ -332,6 +345,8 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // These frames will always be added as the first frames in a packet.
   QuicFrames prepended_frames_;
   QuicFrames old_prepended_frames_;
+
+  LoggingDelegate* logging_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicPacketCreator);
 };

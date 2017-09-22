@@ -168,7 +168,8 @@ QuicFramer::QuicFramer(const QuicVersionVector& supported_versions,
       perspective_(perspective),
       validate_flags_(true),
       creation_time_(creation_time),
-      last_timestamp_(QuicTime::Delta::Zero()) {
+      last_timestamp_(QuicTime::Delta::Zero()),
+      logging_delegate_(nullptr) {
 }
 
 QuicFramer::~QuicFramer() {
@@ -655,6 +656,10 @@ bool QuicFramer::ProcessDataPacket(QuicDataReader* encrypted_reader,
     QUIC_DLOG(WARNING) << ENDPOINT << "Unable to process frame data. Error: "
                        << detailed_error_;
     return false;
+  }
+
+  if(logging_delegate_ != nullptr) {
+    logging_delegate_->OnPacketReceived(header.packet_number, packet.length());
   }
 
   visitor_->OnPacketComplete();

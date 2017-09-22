@@ -60,7 +60,8 @@ QuicSentPacketManager::QuicSentPacketManager(
     CongestionControlType congestion_control_type,
     LossDetectionType loss_type,
     QuicSubflowDescriptor descriptor,
-    MultipathSendAlgorithmInterface* sendAlgorithm)
+    MultipathSendAlgorithmInterface* sendAlgorithm,
+    LoggingDelegate* loggingDelegate)
     : unacked_packets_(),
       perspective_(perspective),
       clock_(clock),
@@ -88,7 +89,8 @@ QuicSentPacketManager::QuicSentPacketManager(
       largest_mtu_acked_(0),
       handshake_confirmed_(false),
       largest_packet_peer_knows_is_acked_(0),
-      subflow_descriptor_(descriptor) {
+      subflow_descriptor_(descriptor),
+      logging_delegate_(loggingDelegate) {
   if(sendAlgorithm != nullptr) {
     SetMultipathSendAlgorithm(sendAlgorithm);
   }
@@ -220,7 +222,7 @@ void QuicSentPacketManager::OnIncomingAck(const QuicAckFrame& ack_frame,
   DCHECK_GE(ack_frame.largest_observed, unacked_packets_.largest_observed());
   unacked_packets_.IncreaseLargestObserved(ack_frame.largest_observed);
 
-  HandleAckForSentPackets(ack_frame);
+  HandleAckForSentPackets(ack_frame, ack_receive_time);
   InvokeLossDetection(ack_receive_time);
   // Ignore losses in RTO mode.
   if (consecutive_rto_count_ > 0 && !use_new_rto_) {
@@ -306,7 +308,7 @@ void QuicSentPacketManager::MaybeInvokeCongestionEvent(
 }
 
 void QuicSentPacketManager::HandleAckForSentPackets(
-    const QuicAckFrame& ack_frame) {
+    const QuicAckFrame& ack_frame, QuicTime ack_receive_time) {
   // Go through the packets we have not received an ack for and see if this
   // incoming_ack shows they've been seen by the peer.
   QuicTime::Delta ack_delay_time = ack_frame.ack_delay_time;
@@ -336,7 +338,7 @@ void QuicSentPacketManager::HandleAckForSentPackets(
       // Packets are marked unackable after they've been acked once.
       largest_newly_acked_ = packet_number;
     }
-    MarkPacketHandled(packet_number, &(*it), ack_delay_time);
+    MarkPacketHandled(packet_number, &(*it), ack_delay_time, ack_receive_time);
   }
 }
 
@@ -484,7 +486,8 @@ QuicPacketNumber QuicSentPacketManager::GetNewestRetransmission(
 
 void QuicSentPacketManager::MarkPacketHandled(QuicPacketNumber packet_number,
                                               QuicTransmissionInfo* info,
-                                              QuicTime::Delta ack_delay_time) {
+                                              QuicTime::Delta ack_delay_time,
+                                              QuicTime ack_receive_time) {
   QuicPacketNumber newest_transmission =
       GetNewestRetransmission(packet_number, *info);
   // Remove the most recent packet, if it is pending retransmission.
@@ -516,6 +519,10 @@ void QuicSentPacketManager::MarkPacketHandled(QuicPacketNumber packet_number,
       info->bytes_sent > largest_mtu_acked_) {
     largest_mtu_acked_ = info->bytes_sent;
     network_change_visitor_->OnPathMtuIncreased(largest_mtu_acked_);
+  }
+  if (logging_delegate_ != nullptr) {
+    logging_delegate_->OnPacketAcknowledged(packet_number, info->bytes_sent,
+        ack_delay_time, ack_receive_time-info->sent_time);
   }
   unacked_packets_.RemoveFromInFlight(info);
   unacked_packets_.RemoveRetransmittability(info);
@@ -671,6 +678,9 @@ void QuicSentPacketManager::RetransmitRtoPackets() {
         debug_delegate_->OnPacketLoss(packet_number, RTO_RETRANSMISSION,
                                       clock_->Now());
       }
+      if(logging_delegate_ != nullptr) {
+        logging_delegate_->OnPacketLost(packet_number, it->bytes_sent, RTO_RETRANSMISSION);
+      }
     }
   }
   if (pending_timer_transmission_count_ > 0) {
@@ -709,6 +719,9 @@ void QuicSentPacketManager::InvokeLossDetection(QuicTime time) {
     ++stats_->packets_lost;
     if (debug_delegate_ != nullptr) {
       debug_delegate_->OnPacketLoss(pair.first, LOSS_RETRANSMISSION, time);
+    }
+    if(logging_delegate_ != nullptr) {
+      logging_delegate_->OnPacketLost(pair.first, pair.second, LOSS_RETRANSMISSION);
     }
 
     // TODO(ianswett): This could be optimized.

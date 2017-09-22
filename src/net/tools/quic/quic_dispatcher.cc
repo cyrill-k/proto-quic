@@ -89,7 +89,8 @@ class StatelessConnectionTerminator {
         creator_(connection_id,
                  framer,
                  helper->GetBufferAllocator(),
-                 &collector_),
+                 &collector_,
+                 nullptr),
         time_wait_list_manager_(time_wait_list_manager) {}
 
   // Generates a packet containing a CONNECTION_CLOSE frame specifying

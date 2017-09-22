@@ -20,6 +20,7 @@
 #include "net/quic/core/quic_connection.h"
 #include "net/quic/core/quic_alarm.h"
 #include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
+#include "net/quic/core/quic_connection_manager_logger.h"
 
 namespace net {
 
@@ -97,7 +98,8 @@ public:
   virtual void StartCryptoConnect(QuicConnection* connection) = 0;
 };
 
-class QUIC_EXPORT_PRIVATE QuicConnectionManager: public QuicConnectionVisitorInterface {
+class QUIC_EXPORT_PRIVATE QuicConnectionManager:
+  public QuicConnectionVisitorInterface {
 public:
   QuicConnectionManager(QuicConnection *connection);
   ~QuicConnectionManager() override;
@@ -316,6 +318,8 @@ private:
   QuicSubflowId next_subflow_id_;
 
   std::unique_ptr<MultipathSendAlgorithmInterface> multipath_send_algorithm_;
+
+  std::unique_ptr<QuicConnectionManagerLogger> logger_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionManager);
 };
