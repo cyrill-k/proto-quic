@@ -177,7 +177,7 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
 
   virtual void OnSubflowCloseFrame(QuicConnection* connection, const QuicSubflowCloseFrame& frame) = 0;
 
-  virtual void OnRetransmission(QuicConnection* connection, const QuicTransmissionInfo& transmission_info) = 0;
+  virtual void OnRetransmission(QuicConnection* connection, QuicTransmissionInfo* transmission_info) = 0;
 
   virtual QuicFrames GetUpdatedAckFrames(QuicConnection* connection) = 0;
 

@@ -37,6 +37,7 @@ QuicTransmissionInfo::QuicTransmissionInfo(
       has_crypto_handshake(has_crypto_handshake),
       num_padding_bytes(num_padding_bytes),
       retransmission(0),
+      retransmission_subflow(QuicSubflowDescriptor()),
       largest_acked(0) {}
 
 QuicTransmissionInfo::QuicTransmissionInfo(const QuicTransmissionInfo& other) =

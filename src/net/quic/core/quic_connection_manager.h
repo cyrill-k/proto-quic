@@ -223,7 +223,7 @@ public:
   bool OnAckFrame(QuicConnection* connection, const QuicAckFrame& frame, const QuicTime& arrival_time_of_packet) override;
   void OnNewSubflowFrame(QuicConnection* connection, const QuicNewSubflowFrame& frame) override;
   void OnSubflowCloseFrame(QuicConnection* connection, const QuicSubflowCloseFrame& frame) override;
-  void OnRetransmission(QuicConnection* connection, const QuicTransmissionInfo& transmission_info) override;
+  void OnRetransmission(QuicConnection* connection, QuicTransmissionInfo* transmission_info) override;
   QuicFrames GetUpdatedAckFrames(QuicConnection* connection) override;
   void OnAckFrameUpdated(QuicConnection* connection) override;
 

@@ -617,7 +617,7 @@ void QuicConnectionManager::OnAckFrameUpdated(QuicConnection* connection) {
 }
 
 void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
-    const QuicTransmissionInfo& transmission_info) {
+    QuicTransmissionInfo* transmission_info) {
   const QuicSubflowDescriptor& descriptor =
       multipath_send_algorithm_->GetNextRetransmissionSubflow(transmission_info,
           connection->SubflowDescriptor());
