@@ -40,6 +40,15 @@ class QUIC_EXPORT_PRIVATE QuicUtils {
                                       QuicStringPiece data2,
                                       QuicStringPiece data3);
 
+  // Combines hash values of types that implement a standard specialization
+  // of std::hash. Uses the same approach as the boost library:
+  // http://www.boost.org/doc/libs/1_37_0/doc/html/hash/reference.html#boost.hash_combine
+  template<class T>
+  static inline void hash_combine(std::size_t& seed, const T& v) {
+    std::hash<T> hasher;
+    seed ^= hasher(v) + 0x9e3779b9 + (seed<<6) + (seed>>2);
+  }
+
   // SerializeUint128 writes the first 96 bits of |v| in little-endian form
   // to |out|.
   static void SerializeUint128Short(uint128 v, uint8_t* out);
