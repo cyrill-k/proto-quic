@@ -21,7 +21,18 @@ namespace net {
 // 3) Track sent time of packets to provide RTT measurements from acks.
 class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
  public:
-  QuicUnackedPacketMap();
+  class QUIC_EXPORT_PRIVATE RetransmissionVisitor {
+    public:
+      virtual ~RetransmissionVisitor() {}
+
+      virtual void RemoveRetransmittability(QuicPacketNumber packetNumber);
+
+      virtual QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDesctriptor);
+
+      virtual QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDesctriptor);
+  };
+
+  QuicUnackedPacketMap(RetransmissionVisitor* visitor);
   ~QuicUnackedPacketMap();
 
   // Adds |serialized_packet| to the map and marks it as sent at |sent_time|.
@@ -33,7 +44,9 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   // Any AckNotifierWrappers in |serialized_packet| are swapped from the
   // serialized packet into the QuicTransmissionInfo.
   void AddSentPacket(SerializedPacket* serialized_packet,
-                     QuicPacketNumber old_packet_number,
+                     QuicPacketDescriptor old_packet_descriptor,
+                     QuicTransmissionInfo* old_transmission_info,
+                     QuicPacketDescriptor new_packet_descriptor,
                      TransmissionType transmission_type,
                      QuicTime sent_time,
                      bool set_in_flight);
@@ -129,10 +142,8 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   // Returns true if there are any pending crypto packets.
   bool HasPendingCryptoPackets() const;
 
-  // Removes any retransmittable frames from this transmission or an associated
-  // transmission.  It removes now useless transmissions, and disconnects any
-  // other packets from other transmissions.
-  void RemoveRetransmittability(QuicTransmissionInfo* info);
+  // Removes any retransmittable frames from this transmission.
+  void RemoveRetransmittableFrames(QuicTransmissionInfo* info);
 
   // Looks up the QuicTransmissionInfo by |packet_number| and calls
   // RemoveRetransmittability.
@@ -155,10 +166,12 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   // |old_packet_number| will remain unacked, but will have no
   // retransmittable data associated with it. Retransmittable frames will be
   // transferred to |info| and all_transmissions will be populated.
-  void TransferRetransmissionInfo(QuicPacketNumber old_packet_number,
-                                  QuicPacketNumber new_packet_number,
-                                  TransmissionType transmission_type,
-                                  QuicTransmissionInfo* info);
+  void TransferRetransmissionInfo(
+      QuicPacketDescriptor old_packet_descriptor,
+      QuicTransmissionInfo* old_info,
+      QuicPacketDescriptor new_packet_descriptor,
+      QuicTransmissionInfo* new_info,
+      TransmissionType transmission_type);
 
   // Returns true if packet may be useful for an RTT measurement.
   bool IsPacketUsefulForMeasuringRtt(QuicPacketNumber packet_number,
@@ -197,6 +210,10 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   QuicByteCount bytes_in_flight_;
   // Number of retransmittable crypto handshake packets.
   size_t pending_crypto_packet_count_;
+
+  // Used to collect information about packet that are retransmitted
+  // on different subflows.
+  RetransmissionVisitor* visitor_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicUnackedPacketMap);
 };

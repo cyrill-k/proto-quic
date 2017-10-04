@@ -223,7 +223,12 @@ public:
   bool OnAckFrame(QuicConnection* connection, const QuicAckFrame& frame, const QuicTime& arrival_time_of_packet) override;
   void OnNewSubflowFrame(QuicConnection* connection, const QuicNewSubflowFrame& frame) override;
   void OnSubflowCloseFrame(QuicConnection* connection, const QuicSubflowCloseFrame& frame) override;
-  void OnRetransmission(QuicConnection* connection, QuicTransmissionInfo* transmission_info) override;
+  void OnRetransmission(QuicConnection* connection, QuicPacketNumber packetNumber, TransmissionType transmissionType, QuicTransmissionInfo* transmissionInfo) override;
+  QuicTransmissionInfo* GetTransmissionInfo(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) override;
+  void RemoveRetransmittability(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) override;
+  QuicPacketNumber GetLargestObserved(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) override;
+  QuicPacketNumber GetLeastUnacked(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) override;
+  void MarkNewestRetransmissionHandled(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) override;
   QuicFrames GetUpdatedAckFrames(QuicConnection* connection) override;
   void OnAckFrameUpdated(QuicConnection* connection) override;
 
@@ -246,6 +251,14 @@ private:
     }
     QUIC_LOG(INFO) << prefix << ": " << s;
   }
+
+  QuicPacketDescriptor GetNewestRetransmissionPacketDescriptor(const QuicPacketDescriptor& packetDescriptor);
+  QuicPacketDescriptor GetActualPacketDescriptor(QuicConnection* connection,
+      const QuicPacketDescriptor& packetDescriptor);
+  QuicPacketDescriptor GetConnectionBasedPacketDescriptor(QuicConnection* connection,
+      const QuicPacketDescriptor& packetDescriptor);
+  QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor);
+  void RecordSpuriousRetransmissionStats(const QuicPacketDescriptor& packetDescriptor);
 
   void AckReceivedForSubflow(QuicConnection* connection, const QuicAckFrame& frame);
 
@@ -284,6 +297,7 @@ private:
 
   QuicConnection* GetConnection(QuicSubflowId subflowId) const;
   QuicConnection* GetConnection(const QuicSubflowDescriptor& subflowId) const;
+  std::list<QuicConnection*> GetAllConnections();
 
   MultipathSendAlgorithmInterface* GetSendAlgorithm() {
     return multipath_send_algorithm_.get();

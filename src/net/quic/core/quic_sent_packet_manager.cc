@@ -62,7 +62,7 @@ QuicSentPacketManager::QuicSentPacketManager(
     QuicSubflowDescriptor descriptor,
     MultipathSendAlgorithmInterface* sendAlgorithm,
     LoggingDelegate* loggingDelegate)
-    : unacked_packets_(),
+    : unacked_packets_(this),
       perspective_(perspective),
       clock_(clock),
       stats_(stats),
@@ -183,6 +183,16 @@ void QuicSentPacketManager::SetFromConfig(const QuicConfig& config) {
   }
 }
 
+void QuicSentPacketManager::RemoveRetransmittability(QuicPacketNumber packetNumber) {
+  retransmission_visitor_->RemoveRetransmittability(QuicPacketDescriptor(subflow_descriptor_, packetNumber));
+}
+QuicPacketNumber QuicSentPacketManager::GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) {
+  return retransmission_visitor_->GetLargestObserved(subflowDescriptor);
+}
+QuicPacketNumber QuicSentPacketManager::GetLeastUnacked(const QuicSubflowDescriptor& subflowDescriptor) {
+  return retransmission_visitor_->GetLeastUnacked(subflowDescriptor);
+}
+
 void QuicSentPacketManager::ResumeConnectionState(
     const CachedNetworkParameters& cached_network_params,
     bool max_bandwidth_resumption) {
@@ -262,10 +272,15 @@ void QuicSentPacketManager::OnIncomingAck(const QuicAckFrame& ack_frame,
   // A single packet number indicating all packets below that are lost should
   // be all the state that is necessary.
   while (undo_pending_retransmits_ && !pending_retransmissions_.empty() &&
-         pending_retransmissions_.front().first > largest_newly_acked_ &&
+         // TODO(cyrill)
+         // just a workaround for multipath since this might not remove all retransmissions
+         // larger than largest_newly_acked_ depending on whether packets from other
+         // subflows are scheduled in front of these packets.
+         !IsRetransmissionFromOtherSubflow(pending_retransmissions_.front().first) &&
+         pending_retransmissions_.front().first.PacketNumber() > largest_newly_acked_ &&
          pending_retransmissions_.front().second == LOSS_RETRANSMISSION) {
     // Cancel any pending retransmissions larger than largest_newly_acked_.
-    unacked_packets_.RestoreToInFlight(pending_retransmissions_.front().first);
+    unacked_packets_.RestoreToInFlight(pending_retransmissions_.front().first.PacketNumber());
     pending_retransmissions_.pop_front();
   }
 
@@ -274,6 +289,21 @@ void QuicSentPacketManager::OnIncomingAck(const QuicAckFrame& ack_frame,
                                    unacked_packets_.largest_observed(),
                                    rtt_updated, GetLeastUnacked());
   }
+}
+
+
+void QuicSentPacketManager::AddPendingRetransmission(QuicPacketNumber oldPacketNumber,
+    QuicSubflowDescriptor oldSubflow, TransmissionType transmissionType) {
+  pending_retransmissions_[QuicPacketDescriptor(oldSubflow, oldPacketNumber)] = transmissionType;
+}
+
+bool QuicSentPacketManager::IsRetransmissionFromOtherSubflow(const QuicPacketDescriptor& packetDescriptor) {
+  return packetDescriptor.IsInitialized();
+}
+
+void QuicSentPacketManager::TryRemovingPendingRetransmission(
+    QuicPacketDescriptor packetDescriptor) {
+  pending_retransmissions_.erase(packetDescriptor);
 }
 
 void QuicSentPacketManager::UpdatePacketInformationReceivedByPeer(
@@ -367,7 +397,7 @@ void QuicSentPacketManager::NeuterUnencryptedPackets() {
       // or otherwise. Unencrypted packets are neutered and abandoned, to ensure
       // they are not retransmitted or considered lost from a congestion control
       // perspective.
-      pending_retransmissions_.erase(packet_number);
+      pending_retransmissions_.erase(QuicPacketDescriptor(packet_number));
       unacked_packets_.RemoveFromInFlight(packet_number);
       unacked_packets_.RemoveRetransmittability(packet_number);
     }
@@ -381,33 +411,40 @@ void QuicSentPacketManager::MarkForRetransmission(
       unacked_packets_.GetTransmissionInfo(packet_number);
   QUIC_BUG_IF(transmission_info.retransmittable_frames.empty());
 
-  // Always send handshake messages on the same connection
-  // If we didn't specify a retransmission visitor, retransmit all
-  // packets on this connection.
-  //if(transmission_type == HANDSHAKE_RETRANSMISSION || retransmission_visitor_ == nullptr) {
-
-    // Both TLP and the new RTO leave the packets in flight and let the loss
-    // detection decide if packets are lost.
-    if (transmission_type != TLP_RETRANSMISSION &&
-        transmission_type != RTO_RETRANSMISSION) {
-      unacked_packets_.RemoveFromInFlight(packet_number);
+  // Both TLP and the new RTO leave the packets in flight and let the loss
+  // detection decide if packets are lost.
+  if (transmission_type != TLP_RETRANSMISSION &&
+      transmission_type != RTO_RETRANSMISSION) {
+    unacked_packets_.RemoveFromInFlight(packet_number);
+  }
+    // TODO(ianswett): Currently the RTO can fire while there are pending NACK
+    // retransmissions for the same data, which is not ideal.
+  if (QuicContainsKey(pending_retransmissions_,
+      QuicPacketDescriptor(packet_number))) {
+    return;
     }
-      // TODO(ianswett): Currently the RTO can fire while there are pending NACK
-      // retransmissions for the same data, which is not ideal.
-    if (QuicContainsKey(pending_retransmissions_, packet_number)) {
-      return;
-      }
 
-    pending_retransmissions_[packet_number] = transmission_type;
-  /*} else {
-    QUIC_LOG(INFO) << "MarkForRetransmission() not handshake";
+  /*if(retransmission_visitor_ == nullptr) {
+    // Retransmit on this subflow.
+    pending_retransmissions_[QuicPacketDescriptor(packet_number)] = transmission_type;
+  } else {*/
+    QUIC_LOG(INFO) << "MarkForRetransmission()";
     // Let the connection manager decide on which subflow to retransmit the packet.
-    DCHECK(false);
+
+    retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
+        unacked_packets_.GetMutableTransmissionInfo(packet_number));
+
+    /*QuicSubflowDescriptor newSubflow = retransmission_visitor_->
+        OnRetransmission(packet_number, unacked_packets_.GetMutableTransmissionInfo(packet_number));
+    pending_retransmissions_[packet_number] = std::pair<TransmissionType,
+            QuicSubflowDescriptor>(transmission_type,newSubflow);*/
+
+    /*DCHECK(false);
     unacked_packets_.RemoveFromInFlight(packet_number);
     if(retransmission_visitor_) {
       retransmission_visitor_->OnRetransmission(unacked_packets_.ExtractTransmissionInfo(packet_number));
-    }
-  }*/
+    }*/
+  //}
 }
 
 void QuicSentPacketManager::RecordOneSpuriousRetransmission(
@@ -420,21 +457,13 @@ void QuicSentPacketManager::RecordOneSpuriousRetransmission(
   }
 }
 
-void QuicSentPacketManager::RecordSpuriousRetransmissions(
-    const QuicTransmissionInfo& info,
-    QuicPacketNumber acked_packet_number) {
-  QuicPacketNumber retransmission = info.retransmission;
-  while (retransmission != 0) {
-    const QuicTransmissionInfo& retransmit_info =
-        unacked_packets_.GetTransmissionInfo(retransmission);
-    retransmission = retransmit_info.retransmission;
-    RecordOneSpuriousRetransmission(retransmit_info);
-  }
+void QuicSentPacketManager::InformLossAlgorithm(const QuicTransmissionInfo& info) {
   // Only inform the loss detection of spurious retransmits it caused.
-  if (unacked_packets_.GetTransmissionInfo(info.retransmission)
-          .transmission_type == LOSS_RETRANSMISSION) {
+  if (retransmission_visitor_->GetTransmissionInfo(info.retransmission)
+          ->transmission_type == LOSS_RETRANSMISSION) {
+    //TODO(cyrill) is is sent to the correct instance of QuicConnection?
     loss_algorithm_->SpuriousRetransmitDetected(
-        unacked_packets_, clock_->Now(), rtt_stats_, info.retransmission);
+        unacked_packets_, clock_->Now(), rtt_stats_, info.retransmission.PacketNumber());
   }
 }
 
@@ -446,52 +475,48 @@ QuicPendingRetransmission QuicSentPacketManager::NextPendingRetransmission() {
   QUIC_BUG_IF(pending_retransmissions_.empty())
       << "Unexpected call to NextPendingRetransmission() with empty pending "
       << "retransmission list. Corrupted memory usage imminent.";
-  QuicPacketNumber packet_number = pending_retransmissions_.begin()->first;
+  QuicPacketDescriptor packet_descriptor = pending_retransmissions_.begin()->first;
   TransmissionType transmission_type = pending_retransmissions_.begin()->second;
   if (unacked_packets_.HasPendingCryptoPackets()) {
     // Ensure crypto packets are retransmitted before other packets.
     for (const auto& pair : pending_retransmissions_) {
+      if(IsRetransmissionFromOtherSubflow(pair.first)) {
+        // ignore packets from other subflows since the can't be crypto handshakes.
+        continue;
+      }
       if (HasCryptoHandshake(
-              unacked_packets_.GetTransmissionInfo(pair.first))) {
-        packet_number = pair.first;
+              unacked_packets_.GetTransmissionInfo(pair.first.PacketNumber()))) {
+        packet_descriptor = pair.first;
         transmission_type = pair.second;
         break;
       }
     }
   }
-  DCHECK(unacked_packets_.IsUnacked(packet_number)) << packet_number;
-  const QuicTransmissionInfo& transmission_info =
-      unacked_packets_.GetTransmissionInfo(packet_number);
-  DCHECK(!transmission_info.retransmittable_frames.empty());
+  DCHECK(!IsRetransmissionFromOtherSubflow(packet_descriptor) &&
+      unacked_packets_.IsUnacked(packet_descriptor.PacketNumber())) << packet_descriptor.PacketNumber();
+  QuicTransmissionInfo* transmission_info =
+      retransmission_visitor_->GetTransmissionInfo(packet_descriptor);
+  DCHECK(!transmission_info->retransmittable_frames.empty());
 
-  return QuicPendingRetransmission(packet_number, transmission_type,
-                                   transmission_info.retransmittable_frames,
-                                   transmission_info.has_crypto_handshake,
-                                   transmission_info.num_padding_bytes,
-                                   transmission_info.encryption_level,
-                                   transmission_info.packet_number_length);
-}
-
-QuicPacketNumber QuicSentPacketManager::GetNewestRetransmission(
-    QuicPacketNumber packet_number,
-    const QuicTransmissionInfo& transmission_info) const {
-  QuicPacketNumber retransmission = transmission_info.retransmission;
-  while (retransmission != 0) {
-    packet_number = retransmission;
-    retransmission =
-        unacked_packets_.GetTransmissionInfo(retransmission).retransmission;
-  }
-  return packet_number;
+  return QuicPendingRetransmission(packet_descriptor, transmission_type,
+                                   transmission_info->retransmittable_frames,
+                                   transmission_info->has_crypto_handshake,
+                                   transmission_info->num_padding_bytes,
+                                   transmission_info->encryption_level,
+                                   transmission_info->packet_number_length);
 }
 
 void QuicSentPacketManager::MarkPacketHandled(QuicPacketNumber packet_number,
                                               QuicTransmissionInfo* info,
                                               QuicTime::Delta ack_delay_time,
                                               QuicTime ack_receive_time) {
-  QuicPacketNumber newest_transmission =
+  retransmission_visitor_->MarkNewestRetransmissionHandled(
+      QuicPacketDescriptor(subflow_descriptor_, packet_number), ack_delay_time);
+
+  /*QuicPacketNumber newest_transmission =
       GetNewestRetransmission(packet_number, *info);
   // Remove the most recent packet, if it is pending retransmission.
-  pending_retransmissions_.erase(newest_transmission);
+  pending_retransmissions_.erase(QuicPacketDescriptor(newest_transmission));
 
   // The AckListener needs to be notified about the most recent
   // transmission, since that's the one only one it tracks.
@@ -513,7 +538,7 @@ void QuicSentPacketManager::MarkPacketHandled(QuicPacketNumber packet_number,
     if (HasCryptoHandshake(newest_transmission_info)) {
       unacked_packets_.RemoveFromInFlight(newest_transmission);
     }
-  }
+  }*/
 
   if (network_change_visitor_ != nullptr &&
       info->bytes_sent > largest_mtu_acked_) {
@@ -525,7 +550,7 @@ void QuicSentPacketManager::MarkPacketHandled(QuicPacketNumber packet_number,
         ack_delay_time, ack_receive_time-info->sent_time);
   }
   unacked_packets_.RemoveFromInFlight(info);
-  unacked_packets_.RemoveRetransmittability(info);
+  unacked_packets_.RemoveRetransmittability(packet_number);
   info->is_unackable = true;
 }
 
@@ -539,7 +564,7 @@ QuicPacketNumber QuicSentPacketManager::GetLeastUnacked() const {
 
 bool QuicSentPacketManager::OnPacketSent(
     SerializedPacket* serialized_packet,
-    QuicPacketNumber original_packet_number,
+    QuicPacketDescriptor original_packet_descriptor,
     QuicTime sent_time,
     TransmissionType transmission_type,
     HasRetransmittableData has_retransmittable_data) {
@@ -549,8 +574,9 @@ bool QuicSentPacketManager::OnPacketSent(
   QUIC_BUG_IF(serialized_packet->encrypted_length == 0)
       << "Cannot send empty packets.";
 
-  if (original_packet_number != 0) {
-    pending_retransmissions_.erase(original_packet_number);
+  if (original_packet_descriptor.IsInitialized()) {
+    pending_retransmissions_.erase(original_packet_descriptor);
+//    original_subflow_descriptor,original_packet_number)); TODO
   }
 
   if (pending_timer_transmission_count_ > 0) {
@@ -568,7 +594,14 @@ bool QuicSentPacketManager::OnPacketSent(
         serialized_packet->encrypted_length, has_retransmittable_data);
   }
 
-  unacked_packets_.AddSentPacket(serialized_packet, original_packet_number,
+  QuicPacketDescriptor new_packet_descriptor = QuicPacketDescriptor(serialized_packet->packet_number);
+  if(original_packet_descriptor.IsInitialized() &&
+      IsRetransmissionFromOtherSubflow(original_packet_descriptor)) {
+    new_packet_descriptor = QuicPacketDescriptor(subflow_descriptor_, new_packet_descriptor.PacketNumber());
+  }
+  unacked_packets_.AddSentPacket(serialized_packet, original_packet_descriptor,
+                                 retransmission_visitor_->GetTransmissionInfo(original_packet_descriptor),
+                                 new_packet_descriptor,
                                  transmission_type, sent_time, in_flight);
   // Reset the retransmission timer anytime a pending packet is sent.
   return in_flight;
@@ -925,9 +958,12 @@ QuicByteCount QuicSentPacketManager::GetBytesInFlight() const {
 void QuicSentPacketManager::CancelRetransmissionsForStream(
     QuicStreamId stream_id) {
   unacked_packets_.CancelRetransmissionsForStream(stream_id);
+}
+
+void QuicSentPacketManager::RemoveUselessPendingRetransmissions() {
   PendingRetransmissionMap::iterator it = pending_retransmissions_.begin();
   while (it != pending_retransmissions_.end()) {
-    if (unacked_packets_.HasRetransmittableFrames(it->first)) {
+    if (!retransmission_visitor_->GetTransmissionInfo(it->first)->retransmittable_frames.empty()) {
       ++it;
       continue;
     }

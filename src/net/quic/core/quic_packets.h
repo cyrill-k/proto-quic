@@ -27,6 +27,7 @@
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_socket_address.h"
 #include "net/quic/platform/api/quic_string_piece.h"
+#include "net/quic/core/quic_packet_descriptor.h"
 
 namespace net {
 
@@ -234,7 +235,9 @@ struct QUIC_EXPORT_PRIVATE SerializedPacket {
   bool has_ack;
   bool has_stop_waiting;
   TransmissionType transmission_type;
-  QuicPacketNumber original_packet_number;
+  // If |original_packet_descriptor| is initialized then this packet is a
+  // retransmission of an already sent packet.
+  QuicPacketDescriptor original_packet_descriptor;
   // The largest acked of the AckFrame in this packet if has_ack is true,
   // 0 otherwise.
   QuicPacketNumber largest_acked;

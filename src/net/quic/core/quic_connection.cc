@@ -589,9 +589,51 @@ bool QuicConnection::SelectMutualVersion(
   return false;
 }
 
-void QuicConnection::OnRetransmission(const QuicTransmissionInfo& transmission_info) {
+void QuicConnection::OnRetransmission(QuicPacketNumber packet_number,
+    TransmissionType transmissionType, QuicTransmissionInfo* transmission_info) {
+  DCHECK(visitor_);
   if(visitor_) {
-    visitor_->OnRetransmission(this, transmission_info);
+    visitor_->OnRetransmission(this, packet_number, transmissionType, transmission_info);
+  }
+}
+
+QuicTransmissionInfo* QuicConnection::GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(visitor_);
+  if(visitor_) {
+    return visitor_->GetTransmissionInfo(this, packetDescriptor);
+  }
+  return nullptr;
+}
+
+void QuicConnection::RemoveRetransmittability(const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(visitor_);
+  if(visitor_) {
+    visitor_->RemoveRetransmittability(this, packetDescriptor);
+  }
+}
+
+QuicPacketNumber QuicConnection::GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) {
+  DCHECK(visitor_);
+  if(visitor_) {
+    return visitor_->GetLargestObserved(this, subflowDescriptor);
+  }
+  return 0;
+}
+
+
+QuicPacketNumber QuicConnection::GetLeastUnacked(const QuicSubflowDescriptor& subflowDescriptor) {
+  DCHECK(visitor_);
+  if(visitor_) {
+    return visitor_->GetLeastUnacked(this, subflowDescriptor);
+  }
+  return 0;
+}
+
+void QuicConnection::MarkNewestRetransmissionHandled(
+    const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) {
+  DCHECK(visitor_);
+  if(visitor_) {
+    visitor_->MarkNewestRetransmissionHandled(this, packetDescriptor, ack_delay_time);
   }
 }
 
@@ -1293,6 +1335,7 @@ void QuicConnection::SendRstStream(QuicStreamId id,
   }
 
   sent_packet_manager_.CancelRetransmissionsForStream(id);
+  sent_packet_manager_.RemoveUselessPendingRetransmissions();
   // Remove all queued packets which only contain data for the reset stream.
   QueuedPacketList::iterator packet_iterator = queued_packets_.begin();
   while (packet_iterator != queued_packets_.end()) {
@@ -1421,8 +1464,11 @@ void QuicConnection::ProcessUdpPacket(const QuicSocketAddress& self_address,
   current_packet_data_ = nullptr;
 }
 
-void QuicConnection::RetransmitFrames(const QuicFrames& frames) {
-
+void QuicConnection::RetransmitFrames(QuicPacketNumber oldPacketNumber,
+    QuicTransmissionInfo* transmissionInfo,
+    QuicSubflowDescriptor oldSubflow,
+    TransmissionType transmissionType) {
+  sent_packet_manager_.AddPendingRetransmission(oldPacketNumber, oldSubflow, transmissionType);
 }
 
 void QuicConnection::OnCanWrite() {
@@ -1760,7 +1806,7 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
 
   if (result.status != WRITE_STATUS_ERROR && debug_visitor_ != nullptr) {
     // Pass the write result to the visitor.
-    debug_visitor_->OnPacketSent(*packet, packet->original_packet_number,
+    debug_visitor_->OnPacketSent(*packet, packet->original_packet_descriptor.PacketNumber(),
                                  packet->transmission_type, packet_send_time);
   }
   if (result.status != WRITE_STATUS_ERROR && logging_interface_ != nullptr) {
@@ -1784,7 +1830,7 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
                 << packet_send_time.ToDebuggingValue();
 
   bool reset_retransmission_alarm = sent_packet_manager_.OnPacketSent(
-      packet, packet->original_packet_number, packet_send_time,
+      packet, packet->original_packet_descriptor, packet_send_time,
       packet->transmission_type, IsRetransmittable(*packet));
 
   if (reset_retransmission_alarm || !retransmission_alarm_->IsSet()) {
@@ -1871,7 +1917,7 @@ void QuicConnection::OnSerializedPacket(SerializedPacket* serialized_packet) {
 
   if (version() > QUIC_VERSION_38) {
     if (serialized_packet->retransmittable_frames.empty() &&
-        serialized_packet->original_packet_number == 0) {
+        !serialized_packet->original_packet_descriptor.IsInitialized()) {
       // Increment consecutive_num_packets_with_no_retransmittable_frames_ if
       // this packet is a new transmission with no retransmittable frames.
       ++consecutive_num_packets_with_no_retransmittable_frames_;

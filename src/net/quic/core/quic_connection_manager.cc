@@ -114,7 +114,16 @@ void QuicConnectionManager::SendRstStream(QuicStreamId id,
           QuicSubflowDescriptor());
   delete rstStreamFrame;
   p("Using subflow", descriptor);
+
+  // Sends RST_STREAM frame and removes any STREAM frame with stream id |id|.
   GetConnection(descriptor)->SendRstStream(id, error, bytes_written);
+
+  // The following procedures are necesary to ensure the pending retransmissions
+  // of all subflows are removed.
+  // Remove unnecessary pending retransmissions
+  for(QuicConnection* connection: GetAllConnections()) {
+    connection->GetSentPacketManager()->RemoveUselessPendingRetransmissions();
+  }
 }
 
 void QuicConnectionManager::SendBlocked(QuicStreamId id) {
@@ -419,6 +428,17 @@ QuicConnection* QuicConnectionManager::GetConnection(
   return nullptr;
 }
 
+std::list<QuicConnection*> QuicConnectionManager::GetAllConnections() {
+  std::list<QuicConnection*> l;
+  for(std::pair<QuicSubflowId, QuicConnection*> p: connections_) {
+    l.push_back(p.second);
+  }
+  for(std::pair<QuicSubflowDescriptor, QuicConnection*> p: unassigned_subflow_map_) {
+    l.push_back(p.second);
+  }
+  return l;
+}
+
 void QuicConnectionManager::OnStreamFrame(QuicConnection* connection,
     const QuicStreamFrame& frame) {
   if (visitor_)
@@ -617,12 +637,161 @@ void QuicConnectionManager::OnAckFrameUpdated(QuicConnection* connection) {
 }
 
 void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
+    QuicPacketNumber packetNumber, TransmissionType transmissionType,
     QuicTransmissionInfo* transmission_info) {
+
+
   const QuicSubflowDescriptor& descriptor =
-      multipath_send_algorithm_->GetNextRetransmissionSubflow(transmission_info,
+      multipath_send_algorithm_->GetNextRetransmissionSubflow(*transmission_info,
           connection->SubflowDescriptor());
-  GetConnection(descriptor)->RetransmitFrames(
-      transmission_info.retransmittable_frames);
+  GetConnection(descriptor)->RetransmitFrames(packetNumber,
+      transmission_info, connection->SubflowDescriptor(), transmissionType);
 }
 
+QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
+  QuicPacketDescriptor d = GetActualPacketDescriptor(connection, packetDescriptor);
+
+  return GetTransmissionInfo(d);
+}
+
+void QuicConnectionManager::RemoveRetransmittability(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
+  QuicPacketDescriptor descriptor = GetActualPacketDescriptor(connection, packetDescriptor);
+
+  QuicTransmissionInfo* info = GetTransmissionInfo(packetDescriptor);
+  QuicConnection* currentConnection = GetConnection(packetDescriptor.SubflowDescriptor());
+  while(info->retransmission.IsInitialized()) {
+    descriptor = GetActualPacketDescriptor(currentConnection, info->retransmission);
+    info->retransmission = QuicPacketDescriptor();
+    info = GetTransmissionInfo(descriptor);
+    currentConnection = GetConnection(descriptor.SubflowDescriptor());
+  }
+
+  currentConnection->GetSentPacketManager()->GetUnackedPacketMap()->RemoveRetransmittableFrames(info);
+}
+
+QuicPacketNumber QuicConnectionManager::GetLargestObserved(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) {
+  return GetConnection(subflowDescriptor)->sent_packet_manager().GetLargestObserved();
+}
+
+QuicPacketNumber QuicConnectionManager::GetLeastUnacked(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) {
+  return GetConnection(subflowDescriptor)->sent_packet_manager().GetLeastUnacked();
+}
+
+void QuicConnectionManager::MarkNewestRetransmissionHandled(QuicConnection* connection,
+    const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) {
+  QuicPacketDescriptor actualPacketDescriptor = GetActualPacketDescriptor(connection, packetDescriptor);
+
+  QuicPacketDescriptor d = GetNewestRetransmissionPacketDescriptor(actualPacketDescriptor);
+  QuicConnection* c = GetConnection(d.SubflowDescriptor());
+  QuicTransmissionInfo* t = GetTransmissionInfo(d);
+  QuicSentPacketManager* pm = c->GetSentPacketManager();
+
+  // Remove the most recent packet, if it is pending retransmission.
+  pm->TryRemovingPendingRetransmission(GetConnectionBasedPacketDescriptor(c,d));
+
+  // The AckListener needs to be notified about the most recent
+  // transmission, since that's the one only one it tracks.
+  pm->GetUnackedPacketMap()->NotifyAndClearListeners(&t->ack_listeners, ack_delay_time);
+
+  if(actualPacketDescriptor == d) {
+    RecordSpuriousRetransmissionStats(actualPacketDescriptor);
+
+    if(t->has_crypto_handshake) {
+      // Remove the most recent packet from flight if it's a crypto handshake
+      // packet, since they won't be acked now that one has been processed.
+      // Other crypto handshake packets won't be in flight, only the newest
+      // transmission of a crypto packet is in flight at once.
+      // TODO(ianswett): Instead of handling all crypto packets special,
+      // only handle nullptr encrypted packets in a special way.
+      pm->GetUnackedPacketMap()->RemoveFromInFlight(t);
+    }
+  }
+
+  /*QuicPacketNumber newest_transmission =
+        GetNewestRetransmission(packet_number, *info);
+    // Remove the most recent packet, if it is pending retransmission.
+    pending_retransmissions_.erase(QuicPacketDescriptor(newest_transmission));
+
+    // The AckListener needs to be notified about the most recent
+    // transmission, since that's the one only one it tracks.
+    if (newest_transmission == packet_number) {
+      unacked_packets_.NotifyAndClearListeners(&info->ack_listeners,
+                                               ack_delay_time);
+    } else {
+      unacked_packets_.NotifyAndClearListeners(newest_transmission,
+                                               ack_delay_time);
+      RecordSpuriousRetransmissions(*info, packet_number);
+      // Remove the most recent packet from flight if it's a crypto handshake
+      // packet, since they won't be acked now that one has been processed.
+      // Other crypto handshake packets won't be in flight, only the newest
+      // transmission of a crypto packet is in flight at once.
+      // TODO(ianswett): Instead of handling all crypto packets special,
+      // only handle nullptr encrypted packets in a special way.
+      const QuicTransmissionInfo& newest_transmission_info =
+          unacked_packets_.GetTransmissionInfo(newest_transmission);
+      if (HasCryptoHandshake(newest_transmission_info)) {
+        unacked_packets_.RemoveFromInFlight(newest_transmission);
+      }
+    }*/
+}
+
+QuicPacketDescriptor QuicConnectionManager::GetNewestRetransmissionPacketDescriptor(const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(packetDescriptor.SubflowDescriptor().IsInitialized()) << "This function only works on complete packet descriptors";
+  QuicPacketDescriptor descriptor = packetDescriptor;
+  QuicTransmissionInfo* info = GetTransmissionInfo(packetDescriptor);
+  QuicConnection* connection = GetConnection(packetDescriptor.SubflowDescriptor());
+  while(info->retransmission.IsInitialized()) {
+    descriptor = GetActualPacketDescriptor(connection, info->retransmission);
+    info = GetTransmissionInfo(descriptor);
+    connection = GetConnection(descriptor.SubflowDescriptor());
+  }
+  return descriptor;
+}
+
+QuicPacketDescriptor QuicConnectionManager::GetActualPacketDescriptor(QuicConnection* connection,
+    const QuicPacketDescriptor& packetDescriptor) {
+  if(!packetDescriptor.IsInitialized()) {
+    // If the descriptor is not initialized, just return as it is.
+    return packetDescriptor;
+  }
+  if(!packetDescriptor.SubflowDescriptor().IsInitialized()) {
+    // If the subflow is not specified, the packet belongs to the connection that sent it.
+    return QuicPacketDescriptor(connection->SubflowDescriptor(), packetDescriptor.PacketNumber());
+  }
+  return packetDescriptor;
+}
+
+QuicPacketDescriptor QuicConnectionManager::GetConnectionBasedPacketDescriptor(
+    QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
+  if(connection->SubflowDescriptor() == packetDescriptor.SubflowDescriptor()) {
+    return QuicPacketDescriptor(QuicSubflowDescriptor(), packetDescriptor.PacketNumber());
+  } else {
+    return packetDescriptor;
+  }
+}
+
+QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) {
+  QuicConnection* owningConnection = GetConnection(packetDescriptor.SubflowDescriptor());
+  return owningConnection->GetSentPacketManager()->GetUnackedPacketMap()->GetMutableTransmissionInfo(packetDescriptor.PacketNumber());
+}
+
+
+void QuicConnectionManager::RecordSpuriousRetransmissionStats(const QuicPacketDescriptor& packetDescriptor) {
+  QuicPacketDescriptor descriptor = packetDescriptor;
+  QuicTransmissionInfo* info = GetTransmissionInfo(descriptor);
+  QuicConnection* connection = GetConnection(descriptor.SubflowDescriptor());
+  // Start from first retransmission
+  do {
+    descriptor = GetActualPacketDescriptor(connection, info->retransmission);
+    info = GetTransmissionInfo(descriptor);
+    connection = GetConnection(descriptor.SubflowDescriptor());
+
+    // Record spuriousRetransmissionStats
+    connection->GetSentPacketManager()->RecordOneSpuriousRetransmission(*info);
+  } while(info->retransmission.IsInitialized());
+
+  info = GetTransmissionInfo(packetDescriptor);
+  connection = GetConnection(packetDescriptor.SubflowDescriptor());
+  connection->GetSentPacketManager()->InformLossAlgorithm(*info);
+}
 }

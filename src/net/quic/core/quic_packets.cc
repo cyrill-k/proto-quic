@@ -212,7 +212,7 @@ SerializedPacket::SerializedPacket(QuicPacketNumber packet_number,
       has_ack(has_ack),
       has_stop_waiting(has_stop_waiting),
       transmission_type(NOT_RETRANSMISSION),
-      original_packet_number(0),
+      original_packet_descriptor(QuicPacketDescriptor()),
       largest_acked(0) {}
 
 SerializedPacket::SerializedPacket(const SerializedPacket& other) = default;

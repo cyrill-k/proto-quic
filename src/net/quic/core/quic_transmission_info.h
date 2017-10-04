@@ -11,6 +11,7 @@
 #include "net/quic/core/quic_ack_listener_interface.h"
 #include "net/quic/core/quic_types.h"
 #include "net/quic/platform/api/quic_export.h"
+#include "net/quic/platform/api/quic_subflow_descriptor.h"
 
 namespace net {
 
@@ -50,13 +51,11 @@ struct QUIC_EXPORT_PRIVATE QuicTransmissionInfo {
   bool has_crypto_handshake;
   // Non-zero if the packet needs padding if it's retransmitted.
   int16_t num_padding_bytes;
-  // Stores the packet number of the next retransmission of this packet.
-  // Zero if the packet has not been retransmitted.
-  QuicPacketNumber retransmission;
-  // Stores the subflow descriptor of the next retransmission of this packet.
-  // If |retransmission_subflow|.IsInitialized() == false then the packet
-  // is retransmitted on the same subflow.
-  QuicSubflowDescriptor retransmission_subflow;
+  // Stores the packet number and subflow of the next retransmission of this
+  // packet. If it is not initialized, then the packet has not been retransmitted.
+  // If the subflow descriptor is not initialized then the packet was
+  // retransmitted on the same subflow.
+  QuicPacketDescriptor retransmission;
   // Non-empty if there is a listener for this packet.
   std::list<AckListenerWrapper> ack_listeners;
   // The largest_acked in the ack frame, if the packet contains an ack.

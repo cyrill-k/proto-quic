@@ -27,6 +27,7 @@
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
 #include "net/quic/platform/api/quic_subflow_descriptor.h"
+#include "net/quic/core/quic_packet_descriptor.h"
 
 namespace net {
 
@@ -44,7 +45,7 @@ struct QuicConnectionStats;
 // retransmittable data associated with each packet. If a packet is
 // retransmitted, it will keep track of each version of a packet so that if a
 // previous transmission is acked, the data will not be retransmitted.
-class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
+class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::RetransmissionVisitor {
  public:
   // Interface which gets callbacks from the QuicSentPacketManager at
   // interesting points.  Implementations must not mutate the state of
@@ -105,7 +106,18 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
     public:
       virtual ~RetransmissionVisitor() {}
 
-      virtual void OnRetransmission(const QuicTransmissionInfo& transmission_info) = 0;
+      virtual void OnRetransmission(QuicPacketNumber packet_number,
+          TransmissionType transmissionType, QuicTransmissionInfo* transmission_info) = 0;
+
+      virtual QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) = 0;
+
+      virtual void RemoveRetransmittability(const QuicPacketDescriptor& packetDescriptor) = 0;
+
+      virtual QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) = 0;
+
+      virtual QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDesctriptor) = 0;
+
+      virtual void MarkNewestRetransmissionHandled(const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) = 0;
   };
 
   QuicSentPacketManager(Perspective perspective,
@@ -116,7 +128,7 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
                         QuicSubflowDescriptor descriptor,
                         MultipathSendAlgorithmInterface* sendAlgorithm,
                         LoggingDelegate* loggingDelegate);
-  virtual ~QuicSentPacketManager();
+  ~QuicSentPacketManager() override;
 
   void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* sendAlgorithm);
 
@@ -126,6 +138,11 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   // scheduled as a retransmission. This allows for retransmissions on
   // different subflows.
   void SetRetransmissionVisitor(RetransmissionVisitor* visitor) { retransmission_visitor_ = visitor; }
+
+  // Implement QuicUnackedPacketMap::RetransmissionVisitor
+  void RemoveRetransmittability(QuicPacketNumber packetNumber) override;
+  QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) override;
+  QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDescriptor) override;
 
   // Pass the CachedNetworkParameters to the send algorithm.
   void ResumeConnectionState(
@@ -140,6 +157,20 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
 
   // Processes the incoming ack.
   void OnIncomingAck(const QuicAckFrame& ack_frame, QuicTime ack_receive_time);
+
+  // Adds a packet to be retransmitted. If |oldPacketNumber| is not initialized
+  // the original packet was sent on this subflow.
+  void AddPendingRetransmission(QuicPacketNumber oldPacketNumber,
+      QuicSubflowDescriptor oldSubflow, TransmissionType transmissionType);
+
+  // Returns true if this packet was sent on another subflow.
+  bool IsRetransmissionFromOtherSubflow(const QuicPacketDescriptor& packetDescriptor);
+
+  QuicUnackedPacketMap* GetUnackedPacketMap() {
+    return &unacked_packets_;
+  }
+
+  void TryRemovingPendingRetransmission(QuicPacketDescriptor packetDescriptor);
 
   // Requests retransmission of all unacked packets of |retransmission_type|.
   // The behavior of this method depends on the value of |retransmission_type|:
@@ -177,7 +208,7 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   // the number of bytes sent and if they were retransmitted.  Returns true if
   // the sender should reset the retransmission timer.
   bool OnPacketSent(SerializedPacket* serialized_packet,
-                    QuicPacketNumber original_packet_number,
+                    QuicPacketDescriptor original_packet_descriptor,
                     QuicTime sent_time,
                     TransmissionType transmission_type,
                     HasRetransmittableData has_retransmittable_data);
@@ -231,8 +262,14 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   // acknowledged.
   QuicByteCount GetBytesInFlight() const;
 
-  // No longer retransmit data for |stream_id|.
+  // Remove all STREAM frames with stream id |stream_id| and
+  // remove packets with empty retransmittable frames from unacked
+  // packet map.
   void CancelRetransmissionsForStream(QuicStreamId stream_id);
+
+  // Remove pending retransmissions that are no longer needed since
+  // the original packet does not have any retransmittable frames anymore.
+  void RemoveUselessPendingRetransmissions();
 
   // Called when peer address changes and the connection migrates.
   void OnConnectionMigration(PeerAddressChangeType type);
@@ -261,6 +298,15 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
     return largest_packet_peer_knows_is_acked_;
   }
 
+  // Notify observers that packet with QuicTransmissionInfo |info| is a spurious
+  // retransmission. It is caller's responsibility to guarantee the packet with
+  // QuicTransmissionInfo |info| is a spurious retransmission before calling
+  // this function.
+  void RecordOneSpuriousRetransmission(const QuicTransmissionInfo& info);
+
+  // Inform the loss algorithm about the spurious retransmission.
+  void InformLossAlgorithm(const QuicTransmissionInfo& info);
+
  private:
   friend class test::QuicConnectionPeer;
   friend class test::QuicSentPacketManagerPeer;
@@ -279,7 +325,10 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
     LOSS_MODE,
   };
 
-  typedef QuicLinkedHashMap<QuicPacketNumber, TransmissionType>
+  // An uninitialized subflow descriptor indicates a retransmission on the same subflow.
+  // Otherwise, the subflow descriptor describes the subflow where the retransmission originated
+  // from.
+  typedef QuicLinkedHashMap<QuicPacketDescriptor, TransmissionType>
       PendingRetransmissionMap;
 
   // Updates the least_packet_awaited_by_peer.
@@ -306,11 +355,6 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
 
   // Returns the retransmission timeout, after which a full RTO occurs.
   const QuicTime::Delta GetRetransmissionDelay() const;
-
-  // Returns the newest transmission associated with a packet.
-  QuicPacketNumber GetNewestRetransmission(
-      QuicPacketNumber packet_number,
-      const QuicTransmissionInfo& transmission_info) const;
 
   // Update the RTT if the ack is for the largest acked packet number.
   // Returns true if the rtt was updated.
@@ -342,17 +386,6 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   // a pending retransmission.
   void MarkForRetransmission(QuicPacketNumber packet_number,
                              TransmissionType transmission_type);
-
-  // Notify observers that packet with QuicTransmissionInfo |info| is a spurious
-  // retransmission. It is caller's responsibility to guarantee the packet with
-  // QuicTransmissionInfo |info| is a spurious retransmission before calling
-  // this function.
-  void RecordOneSpuriousRetransmission(const QuicTransmissionInfo& info);
-
-  // Notify observers about spurious retransmits of packet with
-  // QuicTransmissionInfo |info|.
-  void RecordSpuriousRetransmissions(const QuicTransmissionInfo& info,
-                                     QuicPacketNumber acked_packet_number);
 
   // Sets the send algorithm to the given congestion control type and points the
   // |send_algorithm_|. Takes ownership of |send_algorithm|. Can be called any

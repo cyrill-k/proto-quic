@@ -173,11 +173,30 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
 
   // A new subflow frame was received on this connection. The descriptor is
   // needed to determine on which subflow the frame was received.
-  virtual void OnNewSubflowFrame(QuicConnection* connection, const QuicNewSubflowFrame& frame) = 0;
+  virtual void OnNewSubflowFrame(QuicConnection* connection,
+      const QuicNewSubflowFrame& frame) = 0;
 
-  virtual void OnSubflowCloseFrame(QuicConnection* connection, const QuicSubflowCloseFrame& frame) = 0;
+  virtual void OnSubflowCloseFrame(QuicConnection* connection,
+      const QuicSubflowCloseFrame& frame) = 0;
 
-  virtual void OnRetransmission(QuicConnection* connection, QuicTransmissionInfo* transmission_info) = 0;
+  virtual void OnRetransmission(QuicConnection* connection,
+      QuicPacketNumber packetNumber, TransmissionType transmissionType,
+      QuicTransmissionInfo* transmissionInfo) = 0;
+
+  virtual QuicTransmissionInfo* GetTransmissionInfo(QuicConnection* connection,
+      const QuicPacketDescriptor& packetDescriptor) = 0;
+
+  virtual void RemoveRetransmittability(QuicConnection* connection,
+      const QuicPacketDescriptor& packetDescriptor) = 0;
+
+  virtual QuicPacketNumber GetLargestObserved(QuicConnection* connection,
+      const QuicSubflowDescriptor& subflowDescriptor) = 0;
+
+  virtual QuicPacketNumber GetLeastUnacked(QuicConnection* connection,
+      const QuicSubflowDescriptor& subflowDescriptor) = 0;
+
+  virtual void MarkNewestRetransmissionHandled(QuicConnection* connection,
+      const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) = 0;
 
   virtual QuicFrames GetUpdatedAckFrames(QuicConnection* connection) = 0;
 
@@ -507,6 +526,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection
       QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
 
   // Send a RST_STREAM frame to the peer.
+  // Removes any queued packets only containing STREAM frames of this stream.
   virtual void SendRstStream(QuicStreamId id,
                              QuicRstStreamErrorCode error,
                              QuicStreamOffset bytes_written);
@@ -539,7 +559,10 @@ class QUIC_EXPORT_PRIVATE QuicConnection
     return received_packet_manager_.GetUpdatedAckFrame(now);
   }
 
-  void RetransmitFrames(const QuicFrames& frames);
+  void RetransmitFrames(QuicPacketNumber packetNumber,
+      QuicTransmissionInfo* transmissionInfo,
+      QuicSubflowDescriptor oldSubflow,
+      TransmissionType transmissionType);
 
   // QuicBlockedWriterInterface
   // Called when the underlying connection becomes writable to allow queued
@@ -579,7 +602,13 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   }
 
   // From RetransmissionVisitor
-  void OnRetransmission(const QuicTransmissionInfo& transmission_info) override;
+  void OnRetransmission(QuicPacketNumber packet_number,
+      TransmissionType transmissionType, QuicTransmissionInfo* transmission_info) override;
+  QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) override;
+  void RemoveRetransmittability(const QuicPacketDescriptor& packetDescriptor) override;
+  QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) override;
+  QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDescriptor) override;
+  void MarkNewestRetransmissionHandled(const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) override;
 
   // From SentPacketManager::LoggingDelegate
   void OnPacketAcknowledged(QuicPacketNumber packetNumber,
@@ -775,6 +804,10 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   // Returns the underlying sent packet manager.
   const QuicSentPacketManager& sent_packet_manager() const {
     return sent_packet_manager_;
+  }
+
+  QuicSentPacketManager* GetSentPacketManager() {
+    return &sent_packet_manager_;
   }
 
   void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* send_algorithm) {

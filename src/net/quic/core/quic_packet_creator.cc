@@ -311,7 +311,7 @@ void QuicPacketCreator::ReserializeAllFrames(
                           << packet_.packet_number_length;
   }
   SerializePacket(buffer, buffer_len);
-  packet_.original_packet_number = retransmission.packet_number;
+  packet_.original_packet_descriptor = retransmission.packet_descriptor;
   packet_.transmission_type = retransmission.transmission_type;
   OnSerializedPacket();
   // Restore old values.
@@ -347,7 +347,7 @@ void QuicPacketCreator::ClearPacket() {
   packet_.has_stop_waiting = false;
   packet_.has_crypto_handshake = NOT_HANDSHAKE;
   packet_.num_padding_bytes = 0;
-  packet_.original_packet_number = 0;
+  packet_.original_packet_descriptor = QuicPacketDescriptor();
   packet_.transmission_type = NOT_RETRANSMISSION;
   packet_.encrypted_buffer = nullptr;
   packet_.encrypted_length = 0;
