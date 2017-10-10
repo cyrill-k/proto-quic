@@ -21,6 +21,7 @@
 #include "net/quic/core/quic_alarm.h"
 #include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
 #include "net/quic/core/quic_connection_manager_logger.h"
+#include "net/quic/core/quic_connection_resolver.h"
 
 namespace net {
 
@@ -99,7 +100,7 @@ public:
 };
 
 class QUIC_EXPORT_PRIVATE QuicConnectionManager:
-  public QuicConnectionVisitorInterface {
+  public QuicConnectionVisitorInterface, public QuicConnectionResolver {
 public:
   QuicConnectionManager(QuicConnection *connection);
   ~QuicConnectionManager() override;
@@ -129,8 +130,10 @@ public:
   }
   // Returns a connection on a specific subflow.
   QuicConnection *ConnectionOfSubflow(QuicSubflowDescriptor descriptor) {
-    return connections_[subflow_descriptor_map_[descriptor]];
+    return connections_[subflow_id_map_[descriptor]];
   }
+  // Returns the QuicConnection object of a (fully or partially opened) subflow.
+  QuicConnection* GetConnection(const QuicSubflowDescriptor& subflowId) const;
 
   // Marks the connection with the subflow id |id| as the currently active connection.
   // If the connection doesn't exist yet, the current connection will be set to
@@ -154,7 +157,7 @@ public:
   // Debugging output
   void PrintDebuggingInformation() {
     std::string s;
-    for(auto it: subflow_descriptor_map_) {
+    for(auto it: subflow_id_map_) {
       QuicConnection* connection = connections_.find(it.second)->second;
       s = s + it.first.ToString() + ": " + connection->ToString() + "\n";
     }
@@ -198,6 +201,9 @@ public:
   void OnHandshakeInitiated(QuicConnection* connection);
   // Called when the CryptoHandshakeEvent HANDSHAKE_CONFIRMED was received.
   void OnHandshakeComplete(QuicConnection* connection);
+
+  // Implementation of QuicConnectionResolver
+  QuicSubflowId GetSubflowId(const QuicSubflowDescriptor& subflowDescriptor) override;
 
   // QuicConnectionVisitorInterface
   void OnStreamFrame(QuicConnection* connection, const QuicStreamFrame& frame) override;
@@ -253,10 +259,6 @@ private:
   }
 
   QuicPacketDescriptor GetNewestRetransmissionPacketDescriptor(const QuicPacketDescriptor& packetDescriptor);
-  QuicPacketDescriptor GetActualPacketDescriptor(QuicConnection* connection,
-      const QuicPacketDescriptor& packetDescriptor);
-  QuicPacketDescriptor GetConnectionBasedPacketDescriptor(QuicConnection* connection,
-      const QuicPacketDescriptor& packetDescriptor);
   QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor);
   void RecordSpuriousRetransmissionStats(const QuicPacketDescriptor& packetDescriptor);
 
@@ -288,6 +290,11 @@ private:
 
   bool IsSubflowIdValid(QuicSubflowId subflowId, SubflowDirection direction, std::string* detailed_error);
 
+  bool HasSubflow(QuicSubflowId subflowId) const;
+  bool HasUnassignedSubflow(QuicSubflowDescriptor subflowDescriptor) const;
+  bool HasAssignedSubflow(QuicSubflowDescriptor subflowDescriptor) const;
+  QuicConnection* GetSubflow(QuicSubflowId subflowId) const;
+
   // Create packet writer for new connections
   QuicPacketWriter *GetPacketWriter(QuicSubflowDescriptor descriptor);
 
@@ -295,8 +302,6 @@ private:
 
   QuicSubflowId GetNextOutgoingSubflowId();
 
-  QuicConnection* GetConnection(QuicSubflowId subflowId) const;
-  QuicConnection* GetConnection(const QuicSubflowDescriptor& subflowId) const;
   std::list<QuicConnection*> GetAllConnections();
 
   MultipathSendAlgorithmInterface* GetSendAlgorithm() {
@@ -314,10 +319,10 @@ private:
   // owns the QuicConnection objects
   std::map<QuicSubflowId, QuicConnection*> connections_;
 
-  std::map<QuicSubflowDescriptor, QuicSubflowId> subflow_descriptor_map_;
+  std::map<QuicSubflowDescriptor, QuicSubflowId> subflow_id_map_;
 
   // Stores the connections with incoming handshake messages that did not yet
-  // send a NEW_SUBFLOW frame (using a 0-RTT or 1-RTT packet).
+  // receive a NEW_SUBFLOW frame (using a 0-RTT or 1-RTT packet).
   std::map<QuicSubflowDescriptor, QuicConnection*> unassigned_subflow_map_;
 
   // The ID to use for the next outgoing subflow.

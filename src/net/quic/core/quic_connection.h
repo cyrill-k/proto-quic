@@ -227,6 +227,14 @@ class QUIC_EXPORT_PRIVATE QuicConnectionLoggingInterface {
   // A packet was acked on this connection.
   virtual void OnAckReceived(QuicConnection* connection, QuicPacketNumber packetNumber,
       QuicPacketLength packetLength, QuicTime::Delta ackDelayTime, QuicTime::Delta rtt) = 0;
+
+  // A stream frame was sent on this connection.
+  virtual void OnStreamFrameSent(QuicConnection* connection, QuicStreamId streamId,
+      QuicByteCount length) = 0;
+
+  // A stream frame was received on this connection.
+  virtual void OnStreamFrameReceived(QuicConnection* connection, QuicStreamId streamId,
+      QuicByteCount length) = 0;
 };
 
 // Interface which gets callbacks from the QuicConnection at interesting

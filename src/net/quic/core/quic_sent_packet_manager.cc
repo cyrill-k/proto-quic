@@ -298,7 +298,7 @@ void QuicSentPacketManager::AddPendingRetransmission(QuicPacketNumber oldPacketN
 }
 
 bool QuicSentPacketManager::IsRetransmissionFromOtherSubflow(const QuicPacketDescriptor& packetDescriptor) {
-  return packetDescriptor.IsInitialized();
+  return packetDescriptor.SubflowDescriptor() != subflow_descriptor_;
 }
 
 void QuicSentPacketManager::TryRemovingPendingRetransmission(
@@ -397,7 +397,7 @@ void QuicSentPacketManager::NeuterUnencryptedPackets() {
       // or otherwise. Unencrypted packets are neutered and abandoned, to ensure
       // they are not retransmitted or considered lost from a congestion control
       // perspective.
-      pending_retransmissions_.erase(QuicPacketDescriptor(packet_number));
+      pending_retransmissions_.erase(QuicPacketDescriptor(subflow_descriptor_, packet_number));
       unacked_packets_.RemoveFromInFlight(packet_number);
       unacked_packets_.RemoveRetransmittability(packet_number);
     }
@@ -420,7 +420,7 @@ void QuicSentPacketManager::MarkForRetransmission(
     // TODO(ianswett): Currently the RTO can fire while there are pending NACK
     // retransmissions for the same data, which is not ideal.
   if (QuicContainsKey(pending_retransmissions_,
-      QuicPacketDescriptor(packet_number))) {
+      QuicPacketDescriptor(subflow_descriptor_, packet_number))) {
     return;
     }
 
@@ -461,7 +461,6 @@ void QuicSentPacketManager::InformLossAlgorithm(const QuicTransmissionInfo& info
   // Only inform the loss detection of spurious retransmits it caused.
   if (retransmission_visitor_->GetTransmissionInfo(info.retransmission)
           ->transmission_type == LOSS_RETRANSMISSION) {
-    //TODO(cyrill) is is sent to the correct instance of QuicConnection?
     loss_algorithm_->SpuriousRetransmitDetected(
         unacked_packets_, clock_->Now(), rtt_stats_, info.retransmission.PacketNumber());
   }
@@ -492,8 +491,8 @@ QuicPendingRetransmission QuicSentPacketManager::NextPendingRetransmission() {
       }
     }
   }
-  DCHECK(!IsRetransmissionFromOtherSubflow(packet_descriptor) &&
-      unacked_packets_.IsUnacked(packet_descriptor.PacketNumber())) << packet_descriptor.PacketNumber();
+  DCHECK(IsRetransmissionFromOtherSubflow(packet_descriptor) ||
+      unacked_packets_.IsUnacked(packet_descriptor.PacketNumber())) << packet_descriptor.ToString();
   QuicTransmissionInfo* transmission_info =
       retransmission_visitor_->GetTransmissionInfo(packet_descriptor);
   DCHECK(!transmission_info->retransmittable_frames.empty());
@@ -594,13 +593,13 @@ bool QuicSentPacketManager::OnPacketSent(
         serialized_packet->encrypted_length, has_retransmittable_data);
   }
 
-  QuicPacketDescriptor new_packet_descriptor = QuicPacketDescriptor(serialized_packet->packet_number);
-  if(original_packet_descriptor.IsInitialized() &&
-      IsRetransmissionFromOtherSubflow(original_packet_descriptor)) {
-    new_packet_descriptor = QuicPacketDescriptor(subflow_descriptor_, new_packet_descriptor.PacketNumber());
+  QuicPacketDescriptor new_packet_descriptor = QuicPacketDescriptor(subflow_descriptor_, serialized_packet->packet_number);
+  QuicTransmissionInfo* original_transmission_info = nullptr;
+  if(original_packet_descriptor.IsInitialized()) {
+    original_transmission_info = retransmission_visitor_->GetTransmissionInfo(original_packet_descriptor);
   }
   unacked_packets_.AddSentPacket(serialized_packet, original_packet_descriptor,
-                                 retransmission_visitor_->GetTransmissionInfo(original_packet_descriptor),
+                                 original_transmission_info,
                                  new_packet_descriptor,
                                  transmission_type, sent_time, in_flight);
   // Reset the retransmission timer anytime a pending packet is sent.
@@ -700,7 +699,7 @@ void QuicSentPacketManager::RetransmitRtoPackets() {
     }
     // Abandon non-retransmittable data that's in flight to ensure it doesn't
     // fill up the congestion window.
-    const bool has_retransmissions = it->retransmission != 0;
+    const bool has_retransmissions = it->retransmission.IsInitialized();
     if (it->retransmittable_frames.empty() && it->in_flight &&
         !has_retransmissions) {
       // Log only for non-retransmittable data.
@@ -963,7 +962,10 @@ void QuicSentPacketManager::CancelRetransmissionsForStream(
 void QuicSentPacketManager::RemoveUselessPendingRetransmissions() {
   PendingRetransmissionMap::iterator it = pending_retransmissions_.begin();
   while (it != pending_retransmissions_.end()) {
-    if (!retransmission_visitor_->GetTransmissionInfo(it->first)->retransmittable_frames.empty()) {
+    QuicTransmissionInfo* info = retransmission_visitor_->GetTransmissionInfo(it->first);
+    // Check whether the transmission still exists (it might have been removed by its
+    // own subflow).
+    if (info != nullptr && !info->retransmittable_frames.empty()) {
       ++it;
       continue;
     }

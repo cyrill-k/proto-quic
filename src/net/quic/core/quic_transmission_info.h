@@ -12,6 +12,7 @@
 #include "net/quic/core/quic_types.h"
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_subflow_descriptor.h"
+#include "net/quic/core/quic_packet_descriptor.h"
 
 namespace net {
 

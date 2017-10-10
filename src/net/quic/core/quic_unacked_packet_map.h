@@ -25,11 +25,11 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
     public:
       virtual ~RetransmissionVisitor() {}
 
-      virtual void RemoveRetransmittability(QuicPacketNumber packetNumber);
+      virtual void RemoveRetransmittability(QuicPacketNumber packetNumber) = 0;
 
-      virtual QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDesctriptor);
+      virtual QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDesctriptor) = 0;
 
-      virtual QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDesctriptor);
+      virtual QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDesctriptor) = 0;
   };
 
   QuicUnackedPacketMap(RetransmissionVisitor* visitor);

@@ -901,6 +901,9 @@ bool QuicConnection::OnStreamFrame(const QuicStreamFrame& frame) {
   if (debug_visitor_ != nullptr) {
     debug_visitor_->OnStreamFrame(frame);
   }
+  if(logging_interface_) {
+    logging_interface_->OnStreamFrameReceived(this, frame.stream_id, frame.data_length);
+  }
   if (frame.stream_id != kCryptoStreamId &&
       last_decrypted_packet_level_ == ENCRYPTION_NONE) {
     if (MaybeConsiderAsMemoryCorruption(frame)) {
@@ -1299,6 +1302,9 @@ QuicConsumedData QuicConnection::SendStreamData(
   if (state == NO_FIN && iov.total_length == 0) {
     QUIC_BUG << "Attempt to send empty stream frame";
     return QuicConsumedData(0, false);
+  }
+  if(logging_interface_) {
+    logging_interface_->OnStreamFrameSent(this, id, iov.total_length);
   }
 
   // Opportunistically bundle an ack with every outgoing packet.

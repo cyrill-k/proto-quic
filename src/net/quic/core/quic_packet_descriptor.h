@@ -23,7 +23,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketDescriptor {
 public:
   QuicPacketDescriptor();
   QuicPacketDescriptor(const QuicPacketDescriptor& other) = default;
-  QuicPacketDescriptor(QuicPacketNumber packetNumber);
   QuicPacketDescriptor(QuicSubflowDescriptor subflowDescriptor, QuicPacketNumber packetNumber);
   QuicPacketDescriptor& operator=(const QuicPacketDescriptor& other) = default;
   QuicPacketDescriptor& operator=(QuicPacketDescriptor&& other) = default;

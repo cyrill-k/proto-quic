@@ -10,13 +10,16 @@
 
 #include "base/macros.h"
 #include "net/quic/core/quic_connection.h"
+#include "net/quic/core/quic_connection_resolver.h"
 
 namespace net {
 
-class QUIC_EXPORT_PRIVATE QuicConnectionManagerLogger: public QuicConnectionLoggingInterface {
+class QUIC_EXPORT_PRIVATE QuicConnectionManagerLogger: public QuicConnectionLoggingInterface,
+    public MultipathSendAlgorithmInterface::LoggingInterface {
 public:
-  QuicConnectionManagerLogger(std::string logfile, const QuicClock* clock);
-  ~QuicConnectionManagerLogger() override  ;
+  QuicConnectionManagerLogger(std::string logfile, const QuicClock* clock,
+      QuicConnectionResolver* connectionResolver);
+  ~QuicConnectionManagerLogger() override;
 
   void OnPacketSent(QuicConnection* connection, QuicPacketNumber packetNumber,
       QuicPacketLength packetLength) override;
@@ -33,6 +36,18 @@ public:
       QuicPacketLength packetLength, QuicTime::Delta ackDelayTime,
       QuicTime::Delta rtt) override;
 
+  void OnStreamFrameSent(QuicConnection* connection, QuicStreamId streamId,
+      QuicByteCount length) override;
+
+  void OnStreamFrameReceived(QuicConnection* connection, QuicStreamId streamId,
+      QuicByteCount length) override;
+
+  void OnLoss(const QuicSubflowDescriptor& subflowDescriptor,
+      QuicPacketLength packetLength, QuicByteCount newCongestionWindow) override;
+
+  void OnAck(const QuicSubflowDescriptor& subflowDescriptor,
+      QuicPacketLength packetLength, QuicByteCount newCongestionWindow) override;
+
 private:
   struct Statistic {
     Statistic();
@@ -48,8 +63,12 @@ private:
     uint64_t sumRtt;
     uint64_t nAcksSent;
     uint64_t nAckBytesSent;
+    uint64_t nStreamFramesSent;
+    uint64_t nStreamBytesSent;
+    uint64_t nStreamFramesReceived;
+    uint64_t nStreamBytesReceived;
   };
-  void RecordEvent(std::string eventType, QuicConnection* connection, std::string content);
+  void RecordEvent(std::string eventType, QuicSubflowId id, std::string content);
   void LogStatistic(std::string prefix, Statistic s, QuicTime::Delta);
   void LogIntervalStatistic(QuicTime now);
   void LogFullStatistic(QuicTime now);
@@ -59,6 +78,10 @@ private:
   const std::string EVENT_PACKET_LOST = "PACKET_LOST";
   const std::string EVENT_ACK_SENT = "ACK_SENT";
   const std::string EVENT_ACK_RECEIVED = "ACK_RECEIVED";
+  const std::string EVENT_STREAM_RECEIVED = "STREAM_RECEIVED";
+  const std::string EVENT_STREAM_SENT = "STREAM_SENT";
+  const std::string EVENT_LOSS_ALGORITHM_ACK = "LOSS_ALGORITHM_ACK";
+  const std::string EVENT_LOSS_ALGORITHM_LOSS = "LOSS_ALGORITHM_LOSS";
 
   const QuicClock* clock_;
 
@@ -67,6 +90,7 @@ private:
   QuicTime last_interval_log_;
   std::map<QuicSubflowId, Statistic> interval_statistics_;
   std::map<QuicSubflowId, Statistic> full_statistics_;
+  QuicConnectionResolver* connection_resolver_;
 
   //NetLogWithSource net_log_;
 

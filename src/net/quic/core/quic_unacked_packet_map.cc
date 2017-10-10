@@ -194,7 +194,14 @@ bool QuicUnackedPacketMap::IsPacketUsefulForRetransmittableData(
     const QuicTransmissionInfo& info) const {
   // Packet may have retransmittable frames, or the data may have been
   // retransmitted with a new packet number.
-  QuicPacketNumber largestObserved = visitor_->GetLargestObserved(info.retransmission.SubflowDescriptor());
+
+  QuicPacketNumber largestObserved = largest_observed_;
+  // if the packet was retransmitted on a different subflow, we need
+  // to compare the packet number to the largest observed of this
+  // subflow.
+  if(info.retransmission.SubflowDescriptor().IsInitialized()) {
+    largestObserved = visitor_->GetLargestObserved(info.retransmission.SubflowDescriptor());
+  }
   return !info.retransmittable_frames.empty() ||
          // Allow for an extra 1 RTT before stopping to track old packets.
          info.retransmission.PacketNumber() > largestObserved;
@@ -293,6 +300,14 @@ const QuicTransmissionInfo& QuicUnackedPacketMap::GetTransmissionInfo(
 
 QuicTransmissionInfo* QuicUnackedPacketMap::GetMutableTransmissionInfo(
     QuicPacketNumber packet_number) {
+  //DCHECK(packet_number >= least_unacked_);
+  if(packet_number < least_unacked_) {
+    // this transmission info was already removed.
+    return nullptr;
+  }
+  if(packet_number - least_unacked_ >= unacked_packets_.size()) {
+    DCHECK(false) << packet_number << " does not exist yet";
+  }
   return &unacked_packets_[packet_number - least_unacked_];
 }
 

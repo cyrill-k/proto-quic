@@ -14,11 +14,6 @@ QuicPacketDescriptor::QuicPacketDescriptor() :
     initialized_(false) {
 }
 
-QuicPacketDescriptor::QuicPacketDescriptor(QuicPacketNumber packetNumber) :
-  subflow_descriptor_(QuicSubflowDescriptor()), packet_number_(packetNumber),
-  initialized_(true) {
-}
-
 QuicPacketDescriptor::QuicPacketDescriptor(
     QuicSubflowDescriptor subflowDescriptor, QuicPacketNumber packetNumber) :
     subflow_descriptor_(subflowDescriptor), packet_number_(packetNumber),

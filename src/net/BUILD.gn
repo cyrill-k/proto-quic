@@ -1273,6 +1273,7 @@ component("net") {
       "quic/core/quic_connection_manager_logger.h",
       "quic/core/quic_connection_manager.cc",
       "quic/core/quic_connection_manager.h",
+      "quic/core/quic_connection_resolver.h",
       "quic/core/quic_connection_stats.cc",
       "quic/core/quic_connection_stats.h",
       "quic/core/quic_constants.cc",

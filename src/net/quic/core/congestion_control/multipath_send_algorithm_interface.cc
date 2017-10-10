@@ -11,7 +11,7 @@ namespace net {
 
 MultipathSendAlgorithmInterface::MultipathSendAlgorithmInterface(
     MultipathSchedulerInterface* scheduler)
-    : scheduler_(scheduler) {
+    : logging_interface_(nullptr), scheduler_(scheduler) {
 
 }
 
@@ -45,7 +45,9 @@ QuicTime::Delta MultipathSendAlgorithmInterface::TimeUntilSend(
   if (bytes_in_flight < parameters_[descriptor].congestion_window) {
     return QuicTime::Delta::Zero();
   } else {
-    QUIC_LOG(INFO) << bytes_in_flight << " >= " << parameters_[descriptor].congestion_window;
+    QUIC_LOG(INFO)
+        << bytes_in_flight << " >= "
+            << parameters_[descriptor].congestion_window;
     return QuicTime::Delta::Infinite();
   }
 }
@@ -119,7 +121,8 @@ QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextStreamFrameSubflow
     DCHECK(hint.IsInitialized());
     return hint;
   }
-  QuicSubflowDescriptor descriptor = GetNextSubflow(length, !HasForwardSecureSubflow());
+  QuicSubflowDescriptor descriptor = GetNextSubflow(length,
+      !HasForwardSecureSubflow());
   SentOnSubflow(descriptor, length);
   return descriptor;
 }
@@ -146,7 +149,8 @@ QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextRetransmissionSubf
     DCHECK(hint.IsInitialized());
     return hint;
   }
-  QuicSubflowDescriptor descriptor = GetNextSubflow(transmission_info.bytes_sent, !HasForwardSecureSubflow());
+  QuicSubflowDescriptor descriptor = GetNextSubflow(
+      transmission_info.bytes_sent, !HasForwardSecureSubflow());
   SentOnSubflow(descriptor, transmission_info.bytes_sent);
   return descriptor;
 }
@@ -176,7 +180,8 @@ void MultipathSendAlgorithmInterface::ForwardSecureEncryptionEstablished(
   parameters_[descriptor].encryption_level = ENCRYPTION_FORWARD_SECURE;
 }
 
-EncryptionLevel MultipathSendAlgorithmInterface::GetEncryptionLevel(const QuicSubflowDescriptor& descriptor) {
+EncryptionLevel MultipathSendAlgorithmInterface::GetEncryptionLevel(
+    const QuicSubflowDescriptor& descriptor) {
   return parameters_[descriptor].encryption_level;
 }
 
@@ -195,8 +200,9 @@ bool MultipathSendAlgorithmInterface::HasForwardSecureSubflow() {
 bool MultipathSendAlgorithmInterface::FitsCongestionWindow(
     const QuicSubflowDescriptor& descriptor, QuicPacketLength length) {
   //TODO(cyrill) remove true
-  return true || parameters_[descriptor].bytes_in_flight + length
-      <= parameters_[descriptor].congestion_window;
+  return true
+      || parameters_[descriptor].bytes_in_flight + length
+          <= parameters_[descriptor].congestion_window;
 }
 bool MultipathSendAlgorithmInterface::IsForwardSecure(
     const QuicSubflowDescriptor& descriptor) {
@@ -215,7 +221,11 @@ QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextSubflow(
   QuicSubflowDescriptor fwFitting, fw, initialFitting, initial;
   int k = 0;
   for (const QuicSubflowDescriptor& descriptor : scheduler_->GetSubflowPriority()) {
-    QUIC_LOG(INFO) << "desc(" << k++ << "): " << descriptor.ToString() << ": fit = " << FitsCongestionWindow(descriptor, length) << " fwsec = " << IsForwardSecure(descriptor) << " initsec = " << IsInitialSecure(descriptor);
+    QUIC_LOG(INFO)
+        << "desc(" << k++ << "): " << descriptor.ToString() << ": fit = "
+            << FitsCongestionWindow(descriptor, length) << " fwsec = "
+            << IsForwardSecure(descriptor) << " initsec = "
+            << IsInitialSecure(descriptor);
 
     if (!fwFitting.IsInitialized() && FitsCongestionWindow(descriptor, length)
         && IsForwardSecure(descriptor)) {

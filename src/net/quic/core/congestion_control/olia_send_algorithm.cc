@@ -83,6 +83,10 @@ void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLe
 
   w(descriptor) += w_increase;
 
+  if(logging_interface_) {
+    logging_interface_->OnAck(descriptor, length, w(descriptor));
+  }
+
 // TODO(cyrill)
 //  For each ACK on the path r:
 //
@@ -118,6 +122,10 @@ void OliaSendAlgorithm::Loss(const QuicSubflowDescriptor& descriptor,QuicPacketL
 
   GetOliaParameters(descriptor).l1r = GetOliaParameters(descriptor).l2r;
   GetOliaParameters(descriptor).l2r = 0;
+
+  if(logging_interface_) {
+    logging_interface_->OnLoss(descriptor, length, w(descriptor));
+  }
 }
 
 QuicByteCount& OliaSendAlgorithm::w(const QuicSubflowDescriptor& descriptor) {

@@ -28,6 +28,19 @@ struct QuicTransmissionInfo;
 
 class QUIC_EXPORT_PRIVATE MultipathSendAlgorithmInterface {
 public:
+  // Class that receives callbacks from the send algorithm whenever events happen that should
+  // be logged.
+  class QUIC_EXPORT_PRIVATE LoggingInterface {
+  public:
+    virtual ~LoggingInterface() {
+    }
+
+    virtual void OnLoss(const QuicSubflowDescriptor& subflowDescriptor,
+        QuicPacketLength packetLength, QuicByteCount newCongestionWindow) = 0;
+    virtual void OnAck(const QuicSubflowDescriptor& subflowDescriptor,
+        QuicPacketLength packetLength, QuicByteCount newCongestionWindow) = 0;
+  };
+
   // A sorted vector of packets.
   typedef std::vector<std::pair<QuicPacketNumber, QuicPacketLength>> CongestionVector;
   const QuicPacketLength max_frame_length = 1; //TODO(cyrill) get actual max frame length
@@ -170,6 +183,10 @@ public:
       const QuicSubflowDescriptor& descriptor);
   EncryptionLevel GetEncryptionLevel(const QuicSubflowDescriptor& descriptor);
 
+  void setLoggingInterface(LoggingInterface* loggingInterface) {
+    logging_interface_ = loggingInterface;
+  }
+
 protected:
   QuicSubflowDescriptor uninitialized_subflow_descriptor_;
 
@@ -202,8 +219,9 @@ protected:
     SubflowParameters() {
     }
     SubflowParameters(RttStats* rttStats)
-        : rtt_stats(rttStats), congestion_window(kInitialCongestionWindow*kDefaultTCPMSS), bytes_in_flight(
-            0), congestion_state(SUBFLOW_CONGESTION_SLOWSTART), forward_secure_encryption_established(
+        : rtt_stats(rttStats), congestion_window(
+            kInitialCongestionWindow * kDefaultTCPMSS), bytes_in_flight(0), congestion_state(
+            SUBFLOW_CONGESTION_SLOWSTART), forward_secure_encryption_established(
             false), encryption_level(ENCRYPTION_NONE), in_slow_start(false) {
     }
     RttStats* rtt_stats;
@@ -220,10 +238,13 @@ protected:
   bool TracksDescriptor(const QuicSubflowDescriptor& descriptor) const {
     return parameters_.find(descriptor) != parameters_.end();
   }
-  const SubflowParameters& GetParameters(const QuicSubflowDescriptor& descriptor) const {
+  const SubflowParameters& GetParameters(
+      const QuicSubflowDescriptor& descriptor) const {
     DCHECK(TracksDescriptor(descriptor));
     return parameters_.at(descriptor);
   }
+
+  LoggingInterface* logging_interface_;
 
 private:
   std::unique_ptr<MultipathSchedulerInterface> scheduler_;

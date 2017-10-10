@@ -19,8 +19,8 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
         std::map<QuicSubflowId, QuicConnection*>()), next_outgoing_subflow_id_(
         connection->perspective() == Perspective::IS_SERVER ? 2 : 3), current_subflow_id_(
         kInitialSubflowId), next_subflow_id_(0), multipath_send_algorithm_(
-        new OliaSendAlgorithm(new RoundRobinAlgorithm())),
-        logger_(new QuicConnectionManagerLogger("test.out", connection->clock())) {
+        new OliaSendAlgorithm(new RoundRobinAlgorithm())), logger_(
+        new QuicConnectionManagerLogger("test.out", connection->clock(), this)) {
   connection->SetMultipathSendAlgorithm(GetSendAlgorithm());
   AddConnection(connection->SubflowDescriptor(), kInitialSubflowId, connection);
   connection->set_visitor(this);
@@ -30,12 +30,13 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
 QuicConnectionManager::~QuicConnectionManager() {
   // delete all connections but the first (first connection
   // is not owned by the connection manager)
-  for (auto &it : connections_) {
-    if (it.second != InitialConnection()) {
-      delete it.second;
+  for(QuicConnection* connection: GetAllConnections()) {
+    if(connection != InitialConnection()) {
+      delete connection;
     }
   }
   connections_.clear();
+  unassigned_subflow_map_.clear();
 }
 
 void QuicConnectionManager::CloseConnection(QuicErrorCode error,
@@ -47,8 +48,8 @@ void QuicConnectionManager::CloseConnection(QuicErrorCode error,
 
 bool QuicConnectionManager::HasQueuedData() {
   bool hasQueuedData = false;
-  for (auto it = connections_.begin(); it != connections_.end(); ++it) {
-    if (it->second->HasQueuedData()) {
+  for (QuicConnection* connection : GetAllConnections()) {
+    if (connection->HasQueuedData()) {
       hasQueuedData = true;
     }
   }
@@ -56,8 +57,8 @@ bool QuicConnectionManager::HasQueuedData() {
 }
 
 void QuicConnectionManager::SetNumOpenStreams(size_t num_streams) {
-  for (auto it = connections_.begin(); it != connections_.end(); ++it) {
-    it->second->SetNumOpenStreams(num_streams);
+  for (QuicConnection* connection : GetAllConnections()) {
+    connection->SetNumOpenStreams(num_streams);
   }
 }
 
@@ -66,7 +67,8 @@ QuicConsumedData QuicConnectionManager::SendStreamData(QuicStreamId id,
     QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener,
     QuicConnection* connection) {
   QUIC_LOG(INFO)
-      << "SendStreamData(id = " << id << ", length = " << iov.total_length << ", subflow id = "
+      << "SendStreamData(id = " << id << ", length = " << iov.total_length
+          << ", subflow id = "
           << (connection == nullptr ?
               "null connection" : std::to_string(connection->GetSubflowId()))
           << ") enclvl = "
@@ -118,10 +120,10 @@ void QuicConnectionManager::SendRstStream(QuicStreamId id,
   // Sends RST_STREAM frame and removes any STREAM frame with stream id |id|.
   GetConnection(descriptor)->SendRstStream(id, error, bytes_written);
 
-  // The following procedures are necesary to ensure the pending retransmissions
+  // The following procedures are necessary to ensure the pending retransmissions
   // of all subflows are removed.
   // Remove unnecessary pending retransmissions
-  for(QuicConnection* connection: GetAllConnections()) {
+  for (QuicConnection* connection : GetAllConnections()) {
     connection->GetSentPacketManager()->RemoveUselessPendingRetransmissions();
   }
 }
@@ -191,7 +193,7 @@ void QuicConnectionManager::ProcessUdpPacket(
 
   std::string s;
   bool first = true;
-  for (auto debugIt : subflow_descriptor_map_) {
+  for (auto debugIt : subflow_id_map_) {
     s += (first ? "" : ", ") + std::to_string(debugIt.second);
     first = false;
   }
@@ -199,15 +201,14 @@ void QuicConnectionManager::ProcessUdpPacket(
       << "ProcessUdpPacket(" << self_address.ToString() << ", "
           << peer_address.ToString() << "), subflows: " << s;
 
-  auto it = subflow_descriptor_map_.find(descriptor);
   // subflow already established
-  if (it != subflow_descriptor_map_.end()) {
+  if (HasAssignedSubflow(descriptor)) {
+    auto it = subflow_id_map_.find(descriptor);
     QUIC_LOG(INFO) << "Packet forwarded to: " << it->second;
     connections_[it->second]->ProcessUdpPacket(self_address, peer_address,
         packet);
   } else {
-    if (unassigned_subflow_map_.find(descriptor)
-        != unassigned_subflow_map_.end()) {
+    if (HasUnassignedSubflow(descriptor)) {
       QUIC_LOG(INFO) << "Packet forwarded to unassigned subflow";
     } else {
       QUIC_LOG(INFO) << "Packet forwarded to new incoming subflow";
@@ -283,8 +284,7 @@ void QuicConnectionManager::AssignConnection(QuicSubflowDescriptor descriptor,
   }
 
   // Store the connection with the provided subflow id
-  DCHECK(
-      unassigned_subflow_map_.find(descriptor) != unassigned_subflow_map_.end());
+  DCHECK(HasUnassignedSubflow(descriptor));
   QuicConnection *connection = unassigned_subflow_map_[descriptor];
   RemoveUnassignedConnection(descriptor);
   AddConnection(descriptor, subflowId, connection);
@@ -307,7 +307,7 @@ void QuicConnectionManager::AddConnection(QuicSubflowDescriptor descriptor,
           << descriptor.ToString() << " connection=" << (long long) connection;
   connections_.insert(
       std::pair<QuicSubflowId, QuicConnection*>(subflowId, connection));
-  subflow_descriptor_map_.insert(
+  subflow_id_map_.insert(
       std::pair<QuicSubflowDescriptor, QuicSubflowId>(descriptor, subflowId));
 
   // Try setting the current subflow id again now that we added a connection.
@@ -336,6 +336,7 @@ void QuicConnectionManager::RemoveUnassignedConnection(
 
 void QuicConnectionManager::CloseConnection(QuicSubflowId subflowId,
     SubflowDirection direction) {
+  DCHECK(HasSubflow(subflowId));
   QuicConnection *connection = connections_[subflowId];
   if (direction == SUBFLOW_INCOMING) {
     connection->RemovePrependedFrames();
@@ -357,14 +358,14 @@ void QuicConnectionManager::RemoveConnection(QuicSubflowId subflowId) {
 
   // remove from subflow map
   QuicSubflowDescriptor descriptor;
-  for (const auto& it : subflow_descriptor_map_) {
+  for (const auto& it : subflow_id_map_) {
     if (it.second == subflowId) {
       descriptor = it.first;
       break;
     }
   }
   if (descriptor.IsInitialized()) {
-    subflow_descriptor_map_.erase(descriptor);
+    subflow_id_map_.erase(descriptor);
   }
 }
 
@@ -383,12 +384,32 @@ bool QuicConnectionManager::IsSubflowIdValid(QuicSubflowId subflowId,
       return false;
     }
   }
-  if (connections_.find(subflowId) != connections_.end()) {
+  if (HasSubflow(subflowId)) {
     *detailed_error = "The subflow id: " + std::to_string(subflowId)
         + " is already used by a different subflow.";
     return false;
   }
   return true;
+}
+
+bool QuicConnectionManager::HasSubflow(QuicSubflowId subflowId) const {
+  return connections_.find(subflowId) != connections_.end();
+}
+
+bool QuicConnectionManager::HasUnassignedSubflow(
+    QuicSubflowDescriptor subflowDescriptor) const {
+  return unassigned_subflow_map_.find(subflowDescriptor)
+      != unassigned_subflow_map_.end();
+}
+
+bool QuicConnectionManager::HasAssignedSubflow(
+    QuicSubflowDescriptor subflowDescriptor) const {
+  return subflow_id_map_.find(subflowDescriptor) != subflow_id_map_.end();
+}
+
+QuicConnection* QuicConnectionManager::GetSubflow(QuicSubflowId subflowId) const {
+  DCHECK(HasSubflow(subflowId));
+  return connections_.find(subflowId)->second;
 }
 
 QuicPacketWriter *QuicConnectionManager::GetPacketWriter(
@@ -403,26 +424,18 @@ QuicSubflowId QuicConnectionManager::GetNextOutgoingSubflowId() {
 }
 
 QuicConnection* QuicConnectionManager::GetConnection(
-    QuicSubflowId subflowId) const {
-  auto it = connections_.find(subflowId);
-  if (it != connections_.end()) {
-    return it->second;
-  } else {
-    return nullptr;
-  }
-}
-
-QuicConnection* QuicConnectionManager::GetConnection(
     const QuicSubflowDescriptor& descriptor) const {
-  if (subflow_descriptor_map_.find(descriptor)
-      != subflow_descriptor_map_.end()) {
-    QuicSubflowId subflowId = subflow_descriptor_map_.find(descriptor)->second;
-    if (connections_.find(subflowId) != connections_.end()) {
-      return connections_.find(subflowId)->second;
+  if (HasAssignedSubflow(descriptor)) {
+    QuicSubflowId subflowId = subflow_id_map_.find(descriptor)->second;
+    if (HasSubflow(subflowId)) {
+      return GetSubflow(subflowId);
+    } else {
+      DCHECK(false)
+          <<
+              "There is a subflow id without corresponding QuicConnection object.";
     }
   }
-  if (unassigned_subflow_map_.find(descriptor)
-      != unassigned_subflow_map_.end()) {
+  if (HasUnassignedSubflow(descriptor)) {
     return unassigned_subflow_map_.find(descriptor)->second;
   }
   return nullptr;
@@ -430,13 +443,18 @@ QuicConnection* QuicConnectionManager::GetConnection(
 
 std::list<QuicConnection*> QuicConnectionManager::GetAllConnections() {
   std::list<QuicConnection*> l;
-  for(std::pair<QuicSubflowId, QuicConnection*> p: connections_) {
+  for (std::pair<QuicSubflowId, QuicConnection*> p : connections_) {
     l.push_back(p.second);
   }
-  for(std::pair<QuicSubflowDescriptor, QuicConnection*> p: unassigned_subflow_map_) {
+  for (std::pair<QuicSubflowDescriptor, QuicConnection*> p : unassigned_subflow_map_) {
     l.push_back(p.second);
   }
   return l;
+}
+
+QuicSubflowId QuicConnectionManager::GetSubflowId(
+    const QuicSubflowDescriptor& subflowDescriptor) {
+  return GetConnection(subflowDescriptor)->GetSubflowId();
 }
 
 void QuicConnectionManager::OnStreamFrame(QuicConnection* connection,
@@ -468,18 +486,9 @@ void QuicConnectionManager::OnGoAway(QuicConnection* connection,
 void QuicConnectionManager::OnConnectionClosed(QuicConnection* connection,
     QuicErrorCode error, const std::string& error_details,
     ConnectionCloseSource source) {
-  for (auto it = connections_.begin(); it != connections_.end(); ++it) {
-    if (it->second != connection) {
-      // No need to notify visitor
-      it->second->TearDownLocalConnectionState(error, error_details, source,
-          false);
-    }
-  }
-  for (auto it2 = unassigned_subflow_map_.begin();
-      it2 != unassigned_subflow_map_.end(); ++it2) {
-    if (it2->second != connection) {
-      // No need to notify visitor
-      it2->second->TearDownLocalConnectionState(error, error_details, source,
+  for (QuicConnection* c : GetAllConnections()) {
+    if (c != connection) {
+      connection->TearDownLocalConnectionState(error, error_details, source,
           false);
     }
   }
@@ -553,10 +562,10 @@ bool QuicConnectionManager::OnAckFrame(QuicConnection* connection,
     }
     AckReceivedForSubflow(connection, frame);
 
-  } else if (connections_.find(frame.subflow_id) != connections_.end()) {
-    // Forward the ack frame to the corresponding connection.
+  } else if (HasSubflow(frame.subflow_id)) {
+    // Forward the ack frame to the corresponding connection if it exists.
     QuicConnection *ackFrameConnection =
-        connections_.find(frame.subflow_id)->second;
+        GetSubflow(frame.subflow_id);
     if (!ackFrameConnection->HandleIncomingAckFrame(frame,
         arrival_time_of_packet)) {
       return false;
@@ -571,8 +580,7 @@ bool QuicConnectionManager::OnAckFrame(QuicConnection* connection,
 }
 void QuicConnectionManager::OnNewSubflowFrame(QuicConnection* connection,
     const QuicNewSubflowFrame& frame) {
-  if (unassigned_subflow_map_.find(connection->SubflowDescriptor())
-      != unassigned_subflow_map_.end()) {
+  if (HasUnassignedSubflow(connection->SubflowDescriptor())) {
     // If we receive a NEW_SUBFLOW frame, we are able to decrypt messages since
     // NEW_SUBFLOW frames are only sent encrypted. Thus both endpoints have established
     // a forward secure connection and share the same subflow id. So we change the
@@ -585,10 +593,8 @@ void QuicConnectionManager::OnNewSubflowFrame(QuicConnection* connection,
 }
 void QuicConnectionManager::OnSubflowCloseFrame(QuicConnection* connection,
     const QuicSubflowCloseFrame& frame) {
-  auto it = connections_.find(frame.subflow_id);
-  if (it != connections_.end()) {
-    QuicConnection *connection = it->second;
-    connection->SetSubflowState(QuicConnection::SUBFLOW_CLOSED);
+  if (HasSubflow(frame.subflow_id)) {
+    GetSubflow(frame.subflow_id)->SetSubflowState(QuicConnection::SUBFLOW_CLOSED);
   } else {
     //TODO error handling
   }
@@ -640,63 +646,77 @@ void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
     QuicPacketNumber packetNumber, TransmissionType transmissionType,
     QuicTransmissionInfo* transmission_info) {
 
-
   const QuicSubflowDescriptor& descriptor =
-      multipath_send_algorithm_->GetNextRetransmissionSubflow(*transmission_info,
-          connection->SubflowDescriptor());
-  GetConnection(descriptor)->RetransmitFrames(packetNumber,
-      transmission_info, connection->SubflowDescriptor(), transmissionType);
+      multipath_send_algorithm_->GetNextRetransmissionSubflow(
+          *transmission_info, connection->SubflowDescriptor());
+  GetConnection(descriptor)->RetransmitFrames(packetNumber, transmission_info,
+      connection->SubflowDescriptor(), transmissionType);
 }
 
-QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
-  QuicPacketDescriptor d = GetActualPacketDescriptor(connection, packetDescriptor);
-
-  return GetTransmissionInfo(d);
+QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(
+    QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(packetDescriptor.IsInitialized());
+  return GetTransmissionInfo(packetDescriptor);
 }
 
-void QuicConnectionManager::RemoveRetransmittability(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
-  QuicPacketDescriptor descriptor = GetActualPacketDescriptor(connection, packetDescriptor);
+void QuicConnectionManager::RemoveRetransmittability(QuicConnection* connection,
+    const QuicPacketDescriptor& packetDescriptor) {
+  QuicPacketDescriptor descriptor = packetDescriptor;
 
-  QuicTransmissionInfo* info = GetTransmissionInfo(packetDescriptor);
-  QuicConnection* currentConnection = GetConnection(packetDescriptor.SubflowDescriptor());
-  while(info->retransmission.IsInitialized()) {
-    descriptor = GetActualPacketDescriptor(currentConnection, info->retransmission);
+  QuicTransmissionInfo* info = GetTransmissionInfo(descriptor);
+  QuicConnection* currentConnection = GetConnection(
+      descriptor.SubflowDescriptor());
+  while (info->retransmission.IsInitialized()) {
+    descriptor = info->retransmission;
     info->retransmission = QuicPacketDescriptor();
     info = GetTransmissionInfo(descriptor);
     currentConnection = GetConnection(descriptor.SubflowDescriptor());
   }
 
-  currentConnection->GetSentPacketManager()->GetUnackedPacketMap()->RemoveRetransmittableFrames(info);
+  currentConnection->GetSentPacketManager()->GetUnackedPacketMap()->RemoveRetransmittableFrames(
+      info);
 }
 
-QuicPacketNumber QuicConnectionManager::GetLargestObserved(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) {
-  return GetConnection(subflowDescriptor)->sent_packet_manager().GetLargestObserved();
+QuicPacketNumber QuicConnectionManager::GetLargestObserved(
+    QuicConnection* connection,
+    const QuicSubflowDescriptor& subflowDescriptor) {
+  QuicConnection* c = connection;
+  if (subflowDescriptor.IsInitialized()) {
+    c = GetConnection(subflowDescriptor);
+  }
+  return c->sent_packet_manager().GetLargestObserved();
 }
 
-QuicPacketNumber QuicConnectionManager::GetLeastUnacked(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) {
+QuicPacketNumber QuicConnectionManager::GetLeastUnacked(
+    QuicConnection* connection,
+    const QuicSubflowDescriptor& subflowDescriptor) {
+  DCHECK(subflowDescriptor.IsInitialized());
   return GetConnection(subflowDescriptor)->sent_packet_manager().GetLeastUnacked();
 }
 
-void QuicConnectionManager::MarkNewestRetransmissionHandled(QuicConnection* connection,
-    const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) {
-  QuicPacketDescriptor actualPacketDescriptor = GetActualPacketDescriptor(connection, packetDescriptor);
+void QuicConnectionManager::MarkNewestRetransmissionHandled(
+    QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor,
+    QuicTime::Delta ack_delay_time) {
+  DCHECK(packetDescriptor.IsInitialized());
 
-  QuicPacketDescriptor d = GetNewestRetransmissionPacketDescriptor(actualPacketDescriptor);
+  QuicPacketDescriptor d = GetNewestRetransmissionPacketDescriptor(
+      packetDescriptor);
   QuicConnection* c = GetConnection(d.SubflowDescriptor());
   QuicTransmissionInfo* t = GetTransmissionInfo(d);
   QuicSentPacketManager* pm = c->GetSentPacketManager();
 
   // Remove the most recent packet, if it is pending retransmission.
-  pm->TryRemovingPendingRetransmission(GetConnectionBasedPacketDescriptor(c,d));
+  pm->TryRemovingPendingRetransmission(d);
 
   // The AckListener needs to be notified about the most recent
   // transmission, since that's the one only one it tracks.
-  pm->GetUnackedPacketMap()->NotifyAndClearListeners(&t->ack_listeners, ack_delay_time);
+  pm->GetUnackedPacketMap()->NotifyAndClearListeners(&t->ack_listeners,
+      ack_delay_time);
 
-  if(actualPacketDescriptor == d) {
-    RecordSpuriousRetransmissionStats(actualPacketDescriptor);
+  if (packetDescriptor != d) {
+    RecordSpuriousRetransmissionStats(packetDescriptor);
 
-    if(t->has_crypto_handshake) {
+    if (t->has_crypto_handshake) {
       // Remove the most recent packet from flight if it's a crypto handshake
       // packet, since they won't be acked now that one has been processed.
       // Other crypto handshake packets won't be in flight, only the newest
@@ -706,92 +726,49 @@ void QuicConnectionManager::MarkNewestRetransmissionHandled(QuicConnection* conn
       pm->GetUnackedPacketMap()->RemoveFromInFlight(t);
     }
   }
-
-  /*QuicPacketNumber newest_transmission =
-        GetNewestRetransmission(packet_number, *info);
-    // Remove the most recent packet, if it is pending retransmission.
-    pending_retransmissions_.erase(QuicPacketDescriptor(newest_transmission));
-
-    // The AckListener needs to be notified about the most recent
-    // transmission, since that's the one only one it tracks.
-    if (newest_transmission == packet_number) {
-      unacked_packets_.NotifyAndClearListeners(&info->ack_listeners,
-                                               ack_delay_time);
-    } else {
-      unacked_packets_.NotifyAndClearListeners(newest_transmission,
-                                               ack_delay_time);
-      RecordSpuriousRetransmissions(*info, packet_number);
-      // Remove the most recent packet from flight if it's a crypto handshake
-      // packet, since they won't be acked now that one has been processed.
-      // Other crypto handshake packets won't be in flight, only the newest
-      // transmission of a crypto packet is in flight at once.
-      // TODO(ianswett): Instead of handling all crypto packets special,
-      // only handle nullptr encrypted packets in a special way.
-      const QuicTransmissionInfo& newest_transmission_info =
-          unacked_packets_.GetTransmissionInfo(newest_transmission);
-      if (HasCryptoHandshake(newest_transmission_info)) {
-        unacked_packets_.RemoveFromInFlight(newest_transmission);
-      }
-    }*/
 }
 
-QuicPacketDescriptor QuicConnectionManager::GetNewestRetransmissionPacketDescriptor(const QuicPacketDescriptor& packetDescriptor) {
-  DCHECK(packetDescriptor.SubflowDescriptor().IsInitialized()) << "This function only works on complete packet descriptors";
+QuicPacketDescriptor QuicConnectionManager::GetNewestRetransmissionPacketDescriptor(
+    const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(packetDescriptor.IsInitialized());
   QuicPacketDescriptor descriptor = packetDescriptor;
   QuicTransmissionInfo* info = GetTransmissionInfo(packetDescriptor);
-  QuicConnection* connection = GetConnection(packetDescriptor.SubflowDescriptor());
-  while(info->retransmission.IsInitialized()) {
-    descriptor = GetActualPacketDescriptor(connection, info->retransmission);
+  while (info->retransmission.IsInitialized()) {
+    descriptor = info->retransmission;
     info = GetTransmissionInfo(descriptor);
-    connection = GetConnection(descriptor.SubflowDescriptor());
   }
   return descriptor;
 }
 
-QuicPacketDescriptor QuicConnectionManager::GetActualPacketDescriptor(QuicConnection* connection,
+QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(
     const QuicPacketDescriptor& packetDescriptor) {
-  if(!packetDescriptor.IsInitialized()) {
-    // If the descriptor is not initialized, just return as it is.
-    return packetDescriptor;
-  }
-  if(!packetDescriptor.SubflowDescriptor().IsInitialized()) {
-    // If the subflow is not specified, the packet belongs to the connection that sent it.
-    return QuicPacketDescriptor(connection->SubflowDescriptor(), packetDescriptor.PacketNumber());
-  }
-  return packetDescriptor;
+  DCHECK(packetDescriptor.IsInitialized());
+  QuicConnection* owningConnection = GetConnection(
+      packetDescriptor.SubflowDescriptor());
+  return owningConnection->GetSentPacketManager()->GetUnackedPacketMap()->GetMutableTransmissionInfo(
+      packetDescriptor.PacketNumber());
 }
 
-QuicPacketDescriptor QuicConnectionManager::GetConnectionBasedPacketDescriptor(
-    QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) {
-  if(connection->SubflowDescriptor() == packetDescriptor.SubflowDescriptor()) {
-    return QuicPacketDescriptor(QuicSubflowDescriptor(), packetDescriptor.PacketNumber());
-  } else {
-    return packetDescriptor;
-  }
-}
-
-QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) {
-  QuicConnection* owningConnection = GetConnection(packetDescriptor.SubflowDescriptor());
-  return owningConnection->GetSentPacketManager()->GetUnackedPacketMap()->GetMutableTransmissionInfo(packetDescriptor.PacketNumber());
-}
-
-
-void QuicConnectionManager::RecordSpuriousRetransmissionStats(const QuicPacketDescriptor& packetDescriptor) {
+void QuicConnectionManager::RecordSpuriousRetransmissionStats(
+    const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(packetDescriptor.IsInitialized());
   QuicPacketDescriptor descriptor = packetDescriptor;
   QuicTransmissionInfo* info = GetTransmissionInfo(descriptor);
-  QuicConnection* connection = GetConnection(descriptor.SubflowDescriptor());
+
   // Start from first retransmission
-  do {
-    descriptor = GetActualPacketDescriptor(connection, info->retransmission);
+  while (info->retransmission.IsInitialized()) {
+
+    descriptor = info->retransmission;
     info = GetTransmissionInfo(descriptor);
-    connection = GetConnection(descriptor.SubflowDescriptor());
+    QuicConnection* connection = GetConnection(descriptor.SubflowDescriptor());
 
     // Record spuriousRetransmissionStats
     connection->GetSentPacketManager()->RecordOneSpuriousRetransmission(*info);
-  } while(info->retransmission.IsInitialized());
+  }
 
   info = GetTransmissionInfo(packetDescriptor);
-  connection = GetConnection(packetDescriptor.SubflowDescriptor());
-  connection->GetSentPacketManager()->InformLossAlgorithm(*info);
+  QuicConnection* initialConnection = GetConnection(
+      packetDescriptor.SubflowDescriptor());
+  initialConnection->GetSentPacketManager()->InformLossAlgorithm(*info);
 }
 }
