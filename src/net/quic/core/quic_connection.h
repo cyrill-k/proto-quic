@@ -198,6 +198,9 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
   virtual void MarkNewestRetransmissionHandled(QuicConnection* connection,
       const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) = 0;
 
+  virtual bool IsPendingRetransmission(QuicConnection* connection,
+      const QuicPacketDescriptor& packetDescriptor) = 0;
+
   virtual QuicFrames GetUpdatedAckFrames(QuicConnection* connection) = 0;
 
   virtual void OnAckFrameUpdated(QuicConnection* connection) = 0;
@@ -484,7 +487,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   // is invalid.
   bool HandleIncomingAckFrame(
       const QuicAckFrame& frame,
-      const QuicTime& arrival_time_of_packet);
+      const QuicTime& arrival_time_of_packet,
+      bool sent_on_this_subflow);
 
   // Adds a NEW_SUBFLOW frame as the first frame in every sent packet.
   void PrependNewSubflowFrame(QuicSubflowId subflowId);
@@ -617,6 +621,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) override;
   QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDescriptor) override;
   void MarkNewestRetransmissionHandled(const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) override;
+  bool IsPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) override;
 
   // From SentPacketManager::LoggingDelegate
   void OnPacketAcknowledged(QuicPacketNumber packetNumber,
@@ -887,6 +892,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
 
   bool ack_frame_updated() const;
 
+  bool ack_frame_sent_on_own_subflow() const;
+  void set_ack_frame_sent_on_own_subflow(bool ack_frame_sent_on_own_subflow);
+
   QuicConnectionHelperInterface* helper() { return helper_; }
   QuicAlarmFactory* alarm_factory() { return alarm_factory_; }
 
@@ -1079,6 +1087,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   void CheckIfApplicationLimited();
 
   bool IsNewAckFrame(const QuicAckFrame& frame);
+  bool DoesAckFrameProvideRttMeasurement(const QuicAckFrame& frame);
+
 
   QuicFramer *framer_; // Owned or not depending on |owns_framer_|.
   bool owns_framer_;
@@ -1331,6 +1341,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
 
   // largest observed delay from the last ACK frame.
   QuicTime::Delta largest_observed_last_delay_;
+
+  QuicPacketNumber largest_rtt_measurement_packet_number_;
 
   // Sends events to the connection manager class that should be logged (not owned).
   QuicConnectionLoggingInterface* logging_interface_;

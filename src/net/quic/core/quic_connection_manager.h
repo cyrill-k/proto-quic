@@ -235,6 +235,7 @@ public:
   QuicPacketNumber GetLargestObserved(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) override;
   QuicPacketNumber GetLeastUnacked(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) override;
   void MarkNewestRetransmissionHandled(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) override;
+  bool IsPendingRetransmission(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) override;
   QuicFrames GetUpdatedAckFrames(QuicConnection* connection) override;
   void OnAckFrameUpdated(QuicConnection* connection) override;
 
@@ -261,6 +262,7 @@ private:
   QuicPacketDescriptor GetNewestRetransmissionPacketDescriptor(const QuicPacketDescriptor& packetDescriptor);
   QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor);
   void RecordSpuriousRetransmissionStats(const QuicPacketDescriptor& packetDescriptor);
+  bool TryRemovingPendingRetransmission(const QuicPacketDescriptor& packetDescriptor);
 
   void AckReceivedForSubflow(QuicConnection* connection, const QuicAckFrame& frame);
 

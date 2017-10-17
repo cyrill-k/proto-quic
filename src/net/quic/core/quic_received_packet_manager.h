@@ -69,6 +69,10 @@ class QUIC_EXPORT_PRIVATE QuicReceivedPacketManager {
 
   virtual bool ack_frame_updated() const;
 
+  bool ack_frame_sent_on_own_subflow() const;
+
+  void set_ack_frame_sent_on_own_subflow(bool ack_frame_sent_on_own_subflow);
+
   QuicPacketNumber GetLargestObserved() const;
 
   // For logging purposes.
@@ -96,6 +100,11 @@ class QUIC_EXPORT_PRIVATE QuicReceivedPacketManager {
   // True if |ack_frame_| has been updated since UpdateReceivedPacketInfo was
   // last called.
   bool ack_frame_updated_;
+
+  // True if the ack frame of this subflow was sent on this subflow since
+  // the last time the ack frame was updated.
+  // ack_frame_updated_ == true => ack_frame_sent_on_own_subflow_ == false
+  bool ack_frame_sent_on_own_subflow_;
 
   // Maximum number of ack ranges allowed to be stored in the ack frame.
   size_t max_ack_ranges_;

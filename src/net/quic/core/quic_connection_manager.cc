@@ -557,7 +557,7 @@ bool QuicConnectionManager::OnAckFrame(QuicConnection* connection,
     // The ACK frame is for a packet that was sent on the same subflow.
     // We should only receive an ACK frame with subflow id 0 for a handshake
     // message on the same subflow where the packet was sent.
-    if (!connection->HandleIncomingAckFrame(frame, arrival_time_of_packet)) {
+    if (!connection->HandleIncomingAckFrame(frame, arrival_time_of_packet, true)) {
       return false;
     }
     AckReceivedForSubflow(connection, frame);
@@ -567,7 +567,7 @@ bool QuicConnectionManager::OnAckFrame(QuicConnection* connection,
     QuicConnection *ackFrameConnection =
         GetSubflow(frame.subflow_id);
     if (!ackFrameConnection->HandleIncomingAckFrame(frame,
-        arrival_time_of_packet)) {
+        arrival_time_of_packet, false)) {
       return false;
     }
     AckReceivedForSubflow(ackFrameConnection, frame);
@@ -607,33 +607,35 @@ QuicFrames QuicConnectionManager::GetUpdatedAckFrames(
 
   std::list<QuicSubflowDescriptor> usedSubflows;
   // Always send own ACK frame.
-  if (connection->ack_frame_updated()) {
+  if (!connection->ack_frame_sent_on_own_subflow()) {
+    connection->set_ack_frame_sent_on_own_subflow(true);
     frames.push_back(connection->GetUpdatedAckFrame(now));
     usedSubflows.push_back(connection->SubflowDescriptor());
     ++nAckFrames;
-  }
 
-  // Only allow sending ACK frames from different subflows if we already
-  // established a secure connection.
-  if (connection->encryption_level() == ENCRYPTION_FORWARD_SECURE) {
+    // Only allow sending ACK frames from different subflows if we already
+    // established a secure connection.
+    if (connection->encryption_level() == ENCRYPTION_FORWARD_SECURE) {
 
-    // Only add ACK frames from connections that have already established
-    // a subflow (SUBFLOW_OPEN).
-    const std::list<QuicSubflowDescriptor>& ackFrameSubflows =
-        multipath_send_algorithm_->AppendAckFrames(
-            connection->SubflowDescriptor());
+      // Only add ACK frames from connections that have already established
+      // a subflow (SUBFLOW_OPEN).
+      const std::list<QuicSubflowDescriptor>& ackFrameSubflows =
+          multipath_send_algorithm_->AppendAckFrames(
+              connection->SubflowDescriptor());
 
-    for (auto it = ackFrameSubflows.begin();
-        it != ackFrameSubflows.end() && nAckFrames < kMaxAckFramesPerResponse;
-        ++it) {
-      QuicConnection* subflow = GetConnection(*it);
-      if (subflow != connection && subflow->ack_frame_updated()) {
-        ++nAckFrames;
-        frames.push_back(subflow->GetUpdatedAckFrame(now));
-        usedSubflows.push_back(*it);
+      for (auto it = ackFrameSubflows.begin();
+          it != ackFrameSubflows.end() && nAckFrames < kMaxAckFramesPerResponse;
+          ++it) {
+        QuicConnection* subflow = GetConnection(*it);
+        if (subflow != connection && subflow->ack_frame_updated()) {
+          ++nAckFrames;
+          frames.push_back(subflow->GetUpdatedAckFrame(now));
+          usedSubflows.push_back(*it);
+        }
       }
     }
   }
+
   multipath_send_algorithm_->AckFramesAppended(usedSubflows);
   return frames;
 }
@@ -699,33 +701,47 @@ void QuicConnectionManager::MarkNewestRetransmissionHandled(
     QuicTime::Delta ack_delay_time) {
   DCHECK(packetDescriptor.IsInitialized());
 
-  QuicPacketDescriptor d = GetNewestRetransmissionPacketDescriptor(
+  QuicPacketDescriptor new_d = GetNewestRetransmissionPacketDescriptor(
       packetDescriptor);
-  QuicConnection* c = GetConnection(d.SubflowDescriptor());
-  QuicTransmissionInfo* t = GetTransmissionInfo(d);
-  QuicSentPacketManager* pm = c->GetSentPacketManager();
+  QuicConnection* new_c = GetConnection(new_d.SubflowDescriptor());
+  QuicTransmissionInfo* new_t = GetTransmissionInfo(new_d);
+  QuicSentPacketManager* new_pm = new_c->GetSentPacketManager();
 
   // Remove the most recent packet, if it is pending retransmission.
-  pm->TryRemovingPendingRetransmission(d);
+  TryRemovingPendingRetransmission(new_d);
 
   // The AckListener needs to be notified about the most recent
   // transmission, since that's the one only one it tracks.
-  pm->GetUnackedPacketMap()->NotifyAndClearListeners(&t->ack_listeners,
-      ack_delay_time);
+  for (const AckListenerWrapper& wrapper : new_t->ack_listeners) {
+    wrapper.ack_listener->OnPacketAcked(wrapper.length, ack_delay_time);
+  }
+  new_t->ack_listeners.clear();
 
-  if (packetDescriptor != d) {
+  if (packetDescriptor != new_d) {
     RecordSpuriousRetransmissionStats(packetDescriptor);
 
-    if (t->has_crypto_handshake) {
+    if (new_t->has_crypto_handshake) {
       // Remove the most recent packet from flight if it's a crypto handshake
       // packet, since they won't be acked now that one has been processed.
       // Other crypto handshake packets won't be in flight, only the newest
       // transmission of a crypto packet is in flight at once.
       // TODO(ianswett): Instead of handling all crypto packets special,
       // only handle nullptr encrypted packets in a special way.
-      pm->GetUnackedPacketMap()->RemoveFromInFlight(t);
+      new_pm->GetUnackedPacketMap()->RemoveFromInFlight(new_t);
     }
   }
+}
+
+bool QuicConnectionManager::IsPendingRetransmission(QuicConnection* connection,
+    const QuicPacketDescriptor& packetDescriptor) {
+  bool isPending = false;
+  for(QuicConnection* connection: GetAllConnections()) {
+    if(connection->sent_packet_manager().HasPendingRetransmission(packetDescriptor)) {
+      isPending = true;
+      break;
+    }
+  }
+  return isPending;
 }
 
 QuicPacketDescriptor QuicConnectionManager::GetNewestRetransmissionPacketDescriptor(
@@ -771,4 +787,16 @@ void QuicConnectionManager::RecordSpuriousRetransmissionStats(
       packetDescriptor.SubflowDescriptor());
   initialConnection->GetSentPacketManager()->InformLossAlgorithm(*info);
 }
+
+bool QuicConnectionManager::TryRemovingPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) {
+  //TODO(cyrill): create a map which points to the subflow that
+  // queued up a pending retransmission.
+  for(QuicConnection* connection: GetAllConnections()) {
+    if(connection->GetSentPacketManager()->TryRemovingPendingRetransmission(packetDescriptor)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }

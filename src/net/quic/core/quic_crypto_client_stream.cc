@@ -140,7 +140,7 @@ void QuicCryptoClientStream::AddConnectionState(QuicConnection* connection) {
   QuicCryptoClientStreamConnectionState* anyCS = (QuicCryptoClientStreamConnectionState*)
       connection_states_.begin()->second.get();
   QuicSocketAddress peerAddress = connection->SubflowDescriptor().Peer();
-  QuicServerId sid(peerAddress.host().ToString(),peerAddress.port(),anyCS->server_id_.privacy_mode());
+  QuicServerId sid(anyCS->server_id_.host(),peerAddress.port(),anyCS->server_id_.privacy_mode());
   AddConnectionState(connection, anyCS->verify_context_, sid, anyCS->proof_handler_);
 }
 

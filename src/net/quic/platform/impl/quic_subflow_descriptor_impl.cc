@@ -30,7 +30,17 @@ bool operator!=(const QuicSubflowDescriptorImpl& lhs,
 
 bool operator<(const QuicSubflowDescriptorImpl& lhs,
     const QuicSubflowDescriptorImpl& rhs) {
-  return lhs.self_ < rhs.self_ || lhs.peer_ < rhs.peer_;
+  if(lhs.self_ < rhs.self_) {
+    return true;
+  }
+  if(rhs.self_ < lhs.self_) {
+    return false;
+  }
+
+  if(lhs.peer_ < rhs.peer_) {
+    return true;
+  }
+  return false;
 }
 
 bool QuicSubflowDescriptorImpl::IsInitialized() const {

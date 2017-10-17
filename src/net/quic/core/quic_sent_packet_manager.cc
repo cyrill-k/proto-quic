@@ -224,11 +224,11 @@ void QuicSentPacketManager::SetHandshakeConfirmed() {
 }
 
 void QuicSentPacketManager::OnIncomingAck(const QuicAckFrame& ack_frame,
-                                          QuicTime ack_receive_time) {
+                                          QuicTime ack_receive_time,
+                                          bool rtt_updated) {
   DCHECK_LE(ack_frame.largest_observed, unacked_packets_.largest_sent_packet());
   QuicByteCount prior_in_flight = unacked_packets_.bytes_in_flight();
   UpdatePacketInformationReceivedByPeer(ack_frame);
-  bool rtt_updated = MaybeUpdateRTT(ack_frame, ack_receive_time);
   DCHECK_GE(ack_frame.largest_observed, unacked_packets_.largest_observed());
   unacked_packets_.IncreaseLargestObserved(ack_frame.largest_observed);
 
@@ -297,13 +297,21 @@ void QuicSentPacketManager::AddPendingRetransmission(QuicPacketNumber oldPacketN
   pending_retransmissions_[QuicPacketDescriptor(oldSubflow, oldPacketNumber)] = transmissionType;
 }
 
+bool QuicSentPacketManager::HasPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) const {
+  return pending_retransmissions_.find(packetDescriptor) != pending_retransmissions_.end();
+}
+
 bool QuicSentPacketManager::IsRetransmissionFromOtherSubflow(const QuicPacketDescriptor& packetDescriptor) {
   return packetDescriptor.SubflowDescriptor() != subflow_descriptor_;
 }
 
-void QuicSentPacketManager::TryRemovingPendingRetransmission(
-    QuicPacketDescriptor packetDescriptor) {
-  pending_retransmissions_.erase(packetDescriptor);
+bool QuicSentPacketManager::TryRemovingPendingRetransmission(
+    const QuicPacketDescriptor& packetDescriptor) {
+  if(HasPendingRetransmission(packetDescriptor)) {
+    pending_retransmissions_.erase(packetDescriptor);
+    return true;
+  }
+  return false;
 }
 
 void QuicSentPacketManager::UpdatePacketInformationReceivedByPeer(
@@ -397,7 +405,7 @@ void QuicSentPacketManager::NeuterUnencryptedPackets() {
       // or otherwise. Unencrypted packets are neutered and abandoned, to ensure
       // they are not retransmitted or considered lost from a congestion control
       // perspective.
-      pending_retransmissions_.erase(QuicPacketDescriptor(subflow_descriptor_, packet_number));
+      TryRemovingPendingRetransmission(QuicPacketDescriptor(subflow_descriptor_, packet_number));
       unacked_packets_.RemoveFromInFlight(packet_number);
       unacked_packets_.RemoveRetransmittability(packet_number);
     }
@@ -419,32 +427,13 @@ void QuicSentPacketManager::MarkForRetransmission(
   }
     // TODO(ianswett): Currently the RTO can fire while there are pending NACK
     // retransmissions for the same data, which is not ideal.
-  if (QuicContainsKey(pending_retransmissions_,
+  if (retransmission_visitor_->IsPendingRetransmission(
       QuicPacketDescriptor(subflow_descriptor_, packet_number))) {
     return;
     }
 
-  /*if(retransmission_visitor_ == nullptr) {
-    // Retransmit on this subflow.
-    pending_retransmissions_[QuicPacketDescriptor(packet_number)] = transmission_type;
-  } else {*/
-    QUIC_LOG(INFO) << "MarkForRetransmission()";
-    // Let the connection manager decide on which subflow to retransmit the packet.
-
-    retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
-        unacked_packets_.GetMutableTransmissionInfo(packet_number));
-
-    /*QuicSubflowDescriptor newSubflow = retransmission_visitor_->
-        OnRetransmission(packet_number, unacked_packets_.GetMutableTransmissionInfo(packet_number));
-    pending_retransmissions_[packet_number] = std::pair<TransmissionType,
-            QuicSubflowDescriptor>(transmission_type,newSubflow);*/
-
-    /*DCHECK(false);
-    unacked_packets_.RemoveFromInFlight(packet_number);
-    if(retransmission_visitor_) {
-      retransmission_visitor_->OnRetransmission(unacked_packets_.ExtractTransmissionInfo(packet_number));
-    }*/
-  //}
+  retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
+      unacked_packets_.GetMutableTransmissionInfo(packet_number));
 }
 
 void QuicSentPacketManager::RecordOneSpuriousRetransmission(
@@ -512,33 +501,6 @@ void QuicSentPacketManager::MarkPacketHandled(QuicPacketNumber packet_number,
   retransmission_visitor_->MarkNewestRetransmissionHandled(
       QuicPacketDescriptor(subflow_descriptor_, packet_number), ack_delay_time);
 
-  /*QuicPacketNumber newest_transmission =
-      GetNewestRetransmission(packet_number, *info);
-  // Remove the most recent packet, if it is pending retransmission.
-  pending_retransmissions_.erase(QuicPacketDescriptor(newest_transmission));
-
-  // The AckListener needs to be notified about the most recent
-  // transmission, since that's the one only one it tracks.
-  if (newest_transmission == packet_number) {
-    unacked_packets_.NotifyAndClearListeners(&info->ack_listeners,
-                                             ack_delay_time);
-  } else {
-    unacked_packets_.NotifyAndClearListeners(newest_transmission,
-                                             ack_delay_time);
-    RecordSpuriousRetransmissions(*info, packet_number);
-    // Remove the most recent packet from flight if it's a crypto handshake
-    // packet, since they won't be acked now that one has been processed.
-    // Other crypto handshake packets won't be in flight, only the newest
-    // transmission of a crypto packet is in flight at once.
-    // TODO(ianswett): Instead of handling all crypto packets special,
-    // only handle nullptr encrypted packets in a special way.
-    const QuicTransmissionInfo& newest_transmission_info =
-        unacked_packets_.GetTransmissionInfo(newest_transmission);
-    if (HasCryptoHandshake(newest_transmission_info)) {
-      unacked_packets_.RemoveFromInFlight(newest_transmission);
-    }
-  }*/
-
   if (network_change_visitor_ != nullptr &&
       info->bytes_sent > largest_mtu_acked_) {
     largest_mtu_acked_ = info->bytes_sent;
@@ -574,8 +536,7 @@ bool QuicSentPacketManager::OnPacketSent(
       << "Cannot send empty packets.";
 
   if (original_packet_descriptor.IsInitialized()) {
-    pending_retransmissions_.erase(original_packet_descriptor);
-//    original_subflow_descriptor,original_packet_number)); TODO
+    TryRemovingPendingRetransmission(original_packet_descriptor);
   }
 
   if (pending_timer_transmission_count_ > 0) {
@@ -592,6 +553,8 @@ bool QuicSentPacketManager::OnPacketSent(
         sent_time, unacked_packets_.bytes_in_flight(), packet_number,
         serialized_packet->encrypted_length, has_retransmittable_data);
   }
+
+  sent_times_for_rtt_measurements_.insert(std::pair<QuicPacketNumber, QuicTime>(serialized_packet->packet_number, sent_time));
 
   QuicPacketDescriptor new_packet_descriptor = QuicPacketDescriptor(subflow_descriptor_, serialized_packet->packet_number);
   QuicTransmissionInfo* original_transmission_info = nullptr;
@@ -771,25 +734,30 @@ void QuicSentPacketManager::InvokeLossDetection(QuicTime time) {
 
 bool QuicSentPacketManager::MaybeUpdateRTT(const QuicAckFrame& ack_frame,
                                            QuicTime ack_receive_time) {
-  // We rely on ack_delay_time to compute an RTT estimate, so we
-  // only update rtt when the largest observed gets acked.
-  // NOTE: If ack is a truncated ack, then the largest observed is in fact
-  // unacked, and may cause an RTT sample to be taken.
-  if (!unacked_packets_.IsUnacked(ack_frame.largest_observed)) {
+  if(sent_times_for_rtt_measurements_.find(ack_frame.largest_observed) ==
+      sent_times_for_rtt_measurements_.end()) {
     return false;
   }
-  // We calculate the RTT based on the highest ACKed packet number, the lower
-  // packet numbers will include the ACK aggregation delay.
-  const QuicTransmissionInfo& transmission_info =
-      unacked_packets_.GetTransmissionInfo(ack_frame.largest_observed);
+
+  QuicTime sent_time = sent_times_for_rtt_measurements_.find(ack_frame.largest_observed)->second;
   // Ensure the packet has a valid sent time.
-  if (transmission_info.sent_time == QuicTime::Zero()) {
+  if (sent_time == QuicTime::Zero()) {
     QUIC_BUG << "Acked packet has zero sent time, largest_observed:"
              << ack_frame.largest_observed;
     return false;
   }
 
-  QuicTime::Delta send_delta = ack_receive_time - transmission_info.sent_time;
+  // remove unnecessary sent times.
+  for(auto it = sent_times_for_rtt_measurements_.begin();
+      it != sent_times_for_rtt_measurements_.end();) {
+    if(it->first <= ack_frame.largest_observed) {
+      sent_times_for_rtt_measurements_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+
+  QuicTime::Delta send_delta = ack_receive_time - sent_time;
   rtt_stats_.UpdateRtt(send_delta, ack_frame.ack_delay_time, ack_receive_time);
 
   return true;

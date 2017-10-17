@@ -85,7 +85,7 @@ class AckAlarmDelegate : public QuicAlarm::Delegate {
       : connection_(connection) {}
 
   void OnAlarm() override {
-    DCHECK(connection_->ack_frame_updated());
+    DCHECK(connection_->ack_frame_updated() || !connection_->ack_frame_sent_on_own_subflow());
     QuicConnection::ScopedPacketBundler bundler(connection_,
                                                 QuicConnection::SEND_ACK);
   }
@@ -401,13 +401,20 @@ QuicConnection *QuicConnection::CloneToSubflow(
 
 bool QuicConnection::HandleIncomingAckFrame(
     const QuicAckFrame& frame,
-    const QuicTime& arrival_time_of_packet) {
+    const QuicTime& arrival_time_of_packet,
+    bool sent_on_this_subflow) {
   DCHECK(connected_);
   DCHECK(frame.subflow_id == 0 || frame.subflow_id == subflow_id_);
   if (debug_visitor_ != nullptr) {
     debug_visitor_->OnAckFrame(frame);
   }
   QUIC_DVLOG(1) << ENDPOINT << "OnAckFrame: " << frame;
+
+  bool rtt_updated = false;
+  if(sent_on_this_subflow && DoesAckFrameProvideRttMeasurement(frame)) {
+    rtt_updated = sent_packet_manager_.MaybeUpdateRTT(frame, arrival_time_of_packet);
+    largest_rtt_measurement_packet_number_ = frame.largest_observed;
+  }
 
   if (!IsNewAckFrame(frame)) {
     QUIC_DLOG(INFO) << ENDPOINT << "Received an old ack frame: ignoring";
@@ -426,7 +433,8 @@ bool QuicConnection::HandleIncomingAckFrame(
   }
   largest_observed_last_delay_ = frame.ack_delay_time;
   sent_packet_manager_.OnIncomingAck(frame,
-                                     arrival_time_of_packet);
+                                     arrival_time_of_packet,
+                                     rtt_updated);
   if (no_stop_waiting_frames_) {
     received_packet_manager_.DontWaitForPacketsBefore(
         sent_packet_manager_.largest_packet_peer_knows_is_acked());
@@ -635,6 +643,11 @@ void QuicConnection::MarkNewestRetransmissionHandled(
   if(visitor_) {
     visitor_->MarkNewestRetransmissionHandled(this, packetDescriptor, ack_delay_time);
   }
+}
+
+bool QuicConnection::IsPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) {
+  DCHECK(visitor_);
+  return visitor_->IsPendingRetransmission(this, packetDescriptor);
 }
 
 void QuicConnection::OnPacketAcknowledged(QuicPacketNumber packetNumber,
@@ -2444,6 +2457,7 @@ QuicConnection::ScopedPacketBundler::ScopedPacketBundler(
   if (ShouldSendAck(ack_mode)) {
     QUIC_DVLOG(1) << "Bundling ack with outgoing packet.";
     DCHECK(ack_mode == SEND_ACK || connection_->ack_frame_updated() ||
+           !connection->ack_frame_sent_on_own_subflow() ||
            connection_->stop_waiting_count_ > 1);
     connection_->SendAck();
   }
@@ -2645,6 +2659,14 @@ bool QuicConnection::ack_frame_updated() const {
   return received_packet_manager_.ack_frame_updated();
 }
 
+bool QuicConnection::ack_frame_sent_on_own_subflow() const {
+  return received_packet_manager_.ack_frame_sent_on_own_subflow();
+}
+
+void QuicConnection::set_ack_frame_sent_on_own_subflow(bool ack_frame_sent_on_own_subflow) {
+  received_packet_manager_.set_ack_frame_sent_on_own_subflow(ack_frame_sent_on_own_subflow);
+}
+
 QuicStringPiece QuicConnection::GetCurrentPacket() {
   if (current_packet_data_ == nullptr) {
     return QuicStringPiece();
@@ -2717,6 +2739,14 @@ bool QuicConnection::IsNewAckFrame(const QuicAckFrame& frame) {
   // Acknowledges a resent packet.
   if(frame.largest_observed == sent_packet_manager_.GetLargestObserved() &&
       largest_observed_last_delay_ < frame.ack_delay_time) {
+    return true;
+  }
+
+  return false;
+}
+
+bool QuicConnection::DoesAckFrameProvideRttMeasurement(const QuicAckFrame& frame) {
+  if(frame.largest_observed > largest_rtt_measurement_packet_number_) {
     return true;
   }
 

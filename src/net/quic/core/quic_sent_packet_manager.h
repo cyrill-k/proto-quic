@@ -118,6 +118,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
       virtual QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDesctriptor) = 0;
 
       virtual void MarkNewestRetransmissionHandled(const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) = 0;
+
+      virtual bool IsPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) = 0;
   };
 
   QuicSentPacketManager(Perspective perspective,
@@ -156,12 +158,15 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   void SetHandshakeConfirmed();
 
   // Processes the incoming ack.
-  void OnIncomingAck(const QuicAckFrame& ack_frame, QuicTime ack_receive_time);
+  void OnIncomingAck(const QuicAckFrame& ack_frame, QuicTime ack_receive_time, bool rtt_updated);
 
   // Adds a packet to be retransmitted. If |oldPacketNumber| is not initialized
   // the original packet was sent on this subflow.
   void AddPendingRetransmission(QuicPacketNumber oldPacketNumber,
       QuicSubflowDescriptor oldSubflow, TransmissionType transmissionType);
+
+  // Returns true if the retransmission of a packet scheduled on this subflow.
+  bool HasPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) const;
 
   // Returns true if this packet was sent on another subflow.
   bool IsRetransmissionFromOtherSubflow(const QuicPacketDescriptor& packetDescriptor);
@@ -170,7 +175,7 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
     return &unacked_packets_;
   }
 
-  void TryRemovingPendingRetransmission(QuicPacketDescriptor packetDescriptor);
+  bool TryRemovingPendingRetransmission(const QuicPacketDescriptor& packetDescriptor);
 
   // Requests retransmission of all unacked packets of |retransmission_type|.
   // The behavior of this method depends on the value of |retransmission_type|:
@@ -307,6 +312,10 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   // Inform the loss algorithm about the spurious retransmission.
   void InformLossAlgorithm(const QuicTransmissionInfo& info);
 
+  // Update the RTT if the ack is for the largest acked packet number.
+  // Returns true if the rtt was updated.
+  bool MaybeUpdateRTT(const QuicAckFrame& ack_frame, QuicTime ack_receive_time);
+
  private:
   friend class test::QuicConnectionPeer;
   friend class test::QuicSentPacketManagerPeer;
@@ -355,10 +364,6 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
 
   // Returns the retransmission timeout, after which a full RTO occurs.
   const QuicTime::Delta GetRetransmissionDelay() const;
-
-  // Update the RTT if the ack is for the largest acked packet number.
-  // Returns true if the rtt was updated.
-  bool MaybeUpdateRTT(const QuicAckFrame& ack_frame, QuicTime ack_receive_time);
 
   // Invokes the loss detection algorithm and loses and retransmits packets if
   // necessary.
@@ -483,6 +488,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   QuicSubflowDescriptor subflow_descriptor_;
 
   LoggingDelegate* logging_delegate_;
+
+  std::map<QuicPacketNumber, QuicTime> sent_times_for_rtt_measurements_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicSentPacketManager);
 };

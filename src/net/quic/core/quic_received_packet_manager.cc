@@ -27,6 +27,7 @@ QuicReceivedPacketManager::QuicReceivedPacketManager(QuicConnectionStats* stats,
     QuicReceivedPacketManagerVisitor* visitor)
     : peer_least_packet_awaiting_ack_(0),
       ack_frame_updated_(false),
+      ack_frame_sent_on_own_subflow_(true),
       max_ack_ranges_(0),
       time_largest_observed_(QuicTime::Zero()),
       stats_(stats),
@@ -148,6 +149,11 @@ bool QuicReceivedPacketManager::ack_frame_updated() const {
   return ack_frame_updated_;
 }
 
+
+bool QuicReceivedPacketManager::ack_frame_sent_on_own_subflow() const {
+  return ack_frame_sent_on_own_subflow_;
+}
+
 QuicPacketNumber QuicReceivedPacketManager::GetLargestObserved() const {
   return ack_frame_.largest_observed;
 }
@@ -158,6 +164,13 @@ void QuicReceivedPacketManager::set_ack_frame_updated(bool ack_frame_updated) {
     visitor_->OnAckFrameUpdated();
   }
   ack_frame_updated_ = ack_frame_updated;
+  if(ack_frame_updated == true) {
+    set_ack_frame_sent_on_own_subflow(false);
+  }
+}
+
+void QuicReceivedPacketManager::set_ack_frame_sent_on_own_subflow(bool ack_frame_sent_on_own_subflow) {
+  ack_frame_sent_on_own_subflow_ = ack_frame_sent_on_own_subflow;
 }
 
 }  // namespace net
