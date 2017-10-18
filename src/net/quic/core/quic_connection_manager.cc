@@ -25,6 +25,7 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
   AddConnection(connection->SubflowDescriptor(), kInitialSubflowId, connection);
   connection->set_visitor(this);
   connection->set_logging_visitor(logger_.get());
+  multipath_send_algorithm_->setLoggingInterface(logger_.get());
 }
 
 QuicConnectionManager::~QuicConnectionManager() {
@@ -264,7 +265,6 @@ void QuicConnectionManager::OpenConnection(QuicSubflowDescriptor descriptor,
   connection->set_visitor(this);
   connection->set_logging_visitor(logger_.get());
   connection->SetSubflowState(QuicConnection::SUBFLOW_OPEN_INITIATED);
-  QUIC_LOG(INFO) << "test";
   AddUnassignedConnection(descriptor, connection);
 
   if (direction == SUBFLOW_OUTGOING) {

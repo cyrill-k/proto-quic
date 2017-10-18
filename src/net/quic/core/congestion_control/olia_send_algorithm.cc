@@ -22,6 +22,9 @@ OliaSendAlgorithm::~OliaSendAlgorithm() {
 void OliaSendAlgorithm::OnCongestionEvent(const QuicSubflowDescriptor& descriptor,
     bool rtt_updated, QuicByteCount prior_in_flight, QuicTime event_time,
     const CongestionVector& acked_packets, const CongestionVector& lost_packets) {
+  if(rtt_updated) {
+    logging_interface_->OnRttUpdated(descriptor, GetParameters(descriptor).rtt_stats->smoothed_rtt());
+  }
   for(std::pair<QuicPacketNumber, QuicPacketLength> p: acked_packets) {
     Ack(descriptor, p.second);
   }
@@ -47,7 +50,9 @@ void OliaSendAlgorithm::OnRetransmissionTimeout(
 void OliaSendAlgorithm::AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
     RttStats* rttStats) {
   MultipathSendAlgorithmInterface::AddSubflow(subflowDescriptor, rttStats);
-  olia_parameters_[subflowDescriptor] = OliaSubflowParameters();
+  olia_parameters_.insert(
+      std::pair<const QuicSubflowDescriptor, OliaSubflowParameters>(
+          subflowDescriptor, OliaSubflowParameters()));
 }
 
 void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLength length) {
@@ -76,9 +81,13 @@ void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLe
 
   double w_increase = (left_term+alpha)*MSS_r*GetOliaParameters(descriptor).l2r;
 
-  QUIC_LOG(INFO) << "ACK(" << GetOliaParameters(descriptor).id << "," << length << ") w_r_new[" << (w(descriptor) + w_increase) <<
-      "] = w_r[" << w(descriptor) << "]+(" << left_term << "+alpha[" << alpha <<
-      "])*MSS_r[" << MSS_r << "]*bytes_acked[" << GetOliaParameters(descriptor).l2r << "] [" << w_increase << "]";
+  QUIC_LOG(INFO) << "ACK(" << GetOliaParameters(descriptor).id << "," << length << "," << rtt(descriptor) <<
+      ") w_r_new[" << (w(descriptor) + w_increase) <<
+      "] = w_r[" << w(descriptor) << "]+(" << left_term <<
+      "+alpha[" << alpha <<
+      "])*MSS_r[" << MSS_r <<
+      "]*bytes_acked[" << GetOliaParameters(descriptor).l2r <<
+      "] [" << w_increase << "]";
 
 
   w(descriptor) += w_increase;
@@ -117,7 +126,7 @@ void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLe
 //   multiplied by MSS_r * bytes_acked.
 }
 void OliaSendAlgorithm::Loss(const QuicSubflowDescriptor& descriptor,QuicPacketLength length) {
-  QUIC_LOG(INFO) << "LOSS(" << GetOliaParameters(descriptor).id << ") {" << GetOliaParameters(descriptor).l1r << "," << GetOliaParameters(descriptor).l2r << "} -> {" <<
+  QUIC_LOG(INFO) << "LOSS(" << GetOliaParameters(descriptor).id <<  "," << rtt(descriptor) << ") {" << GetOliaParameters(descriptor).l1r << "," << GetOliaParameters(descriptor).l2r << "} -> {" <<
       GetOliaParameters(descriptor).l2r << ",0}";
 
   GetOliaParameters(descriptor).l1r = GetOliaParameters(descriptor).l2r;
@@ -133,7 +142,14 @@ QuicByteCount& OliaSendAlgorithm::w(const QuicSubflowDescriptor& descriptor) {
 }
 double OliaSendAlgorithm::rtt(const QuicSubflowDescriptor& descriptor) {
   QuicTime::Delta srttDelta = parameters_[descriptor].rtt_stats->smoothed_rtt();
-  double srtt = ((double)srttDelta.ToMicroseconds())/1000000;
+  int64_t rttMicroSeconds;
+  if(srttDelta == QuicTime::Delta::Zero()) {
+    // Provide fixed initial estimation of rtt
+    rttMicroSeconds = kInitialRttMs*kNumMicrosPerMilli;
+  } else {
+    rttMicroSeconds = srttDelta.ToMicroseconds();
+  }
+  double srtt = ((double)rttMicroSeconds)/1000000;
   return srtt;
 }
 void OliaSendAlgorithm::DeterminePaths() {

@@ -170,6 +170,16 @@ void QuicConnectionManagerLogger::OnAck(
   RecordEvent(EVENT_LOSS_ALGORITHM_ACK, id, s);
 }
 
+void QuicConnectionManagerLogger::OnRttUpdated(
+    const QuicSubflowDescriptor& subflowDescriptor, QuicTime::Delta newRtt) {
+  QuicSubflowId id = connection_resolver_->GetSubflowId(subflowDescriptor);
+  if (id == 0)
+    return;
+
+  std::string s = std::to_string(newRtt.ToMicroseconds());
+  RecordEvent(EVENT_LOSS_ALGORITHM_RTT, id, s);
+}
+
 void QuicConnectionManagerLogger::RecordEvent(std::string eventType,
     QuicSubflowId id, std::string content) {
   if (id == 0)
@@ -215,8 +225,9 @@ void QuicConnectionManagerLogger::LogStatistic(std::string prefix, Statistic s,
       / ((double) delta.ToMicroseconds() / 1000000);
 
   QUIC_LOG(INFO)
-      << prefix << "mu=" << delta.ToMicroseconds() << " sent[" << std::to_string(s.nPacketsSent) << "/"
-          << s.nBytesSent << "]=" << std::to_string(sent_bps) << " received["
+      << prefix << "mu=" << delta.ToMicroseconds() << " sent["
+          << std::to_string(s.nPacketsSent) << "/" << s.nBytesSent << "]="
+          << std::to_string(sent_bps) << " received["
           << std::to_string(s.nPacketsReceived) << "] lost["
           << std::to_string(s.nPacketsLost) << "/" << s.nBytesLost << "]="
           << std::to_string(lost_bps) << " acksent["

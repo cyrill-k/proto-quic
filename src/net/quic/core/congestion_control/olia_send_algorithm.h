@@ -29,6 +29,8 @@ public:
   OliaSendAlgorithm(MultipathSchedulerInterface* scheduler);
   ~OliaSendAlgorithm() override;
 
+  const int kInitialRttMs = 100;
+
   void OnCongestionEvent(
       const QuicSubflowDescriptor& descriptor, bool rtt_updated,
       QuicByteCount prior_in_flight, QuicTime event_time,

@@ -39,6 +39,8 @@ public:
         QuicPacketLength packetLength, QuicByteCount newCongestionWindow) = 0;
     virtual void OnAck(const QuicSubflowDescriptor& subflowDescriptor,
         QuicPacketLength packetLength, QuicByteCount newCongestionWindow) = 0;
+    virtual void OnRttUpdated(const QuicSubflowDescriptor& subflowDescriptor,
+        QuicTime::Delta newRtt) = 0;
   };
 
   // A sorted vector of packets.
