@@ -160,13 +160,14 @@ void QuicConnectionManagerLogger::OnLoss(
 
 void QuicConnectionManagerLogger::OnAck(
     const QuicSubflowDescriptor& subflowDescriptor,
-    QuicPacketLength packetLength, QuicByteCount newCongestionWindow) {
+    QuicPacketLength packetLength, QuicByteCount newCongestionWindow,
+    bool isInSlowStart) {
   QuicSubflowId id = connection_resolver_->GetSubflowId(subflowDescriptor);
   if (id == 0)
     return;
 
   std::string s = std::to_string(packetLength) + ","
-      + std::to_string(newCongestionWindow);
+      + std::to_string(newCongestionWindow) + "," + (isInSlowStart?"SS":"CA");
   RecordEvent(EVENT_LOSS_ALGORITHM_ACK, id, s);
 }
 

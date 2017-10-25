@@ -72,7 +72,7 @@ QuicByteCount MultipathSendAlgorithmInterface::GetCongestionWindow(
           return it.second.congestion_window + val;
         });
   } else {
-    DCHECK(parameters_.find(descriptor) != parameters_.end());
+    DCHECK(TracksDescriptor(descriptor));
     return parameters_.at(descriptor).congestion_window;
   }
 }
@@ -80,18 +80,20 @@ QuicByteCount MultipathSendAlgorithmInterface::GetCongestionWindow(
 bool MultipathSendAlgorithmInterface::InSlowStart(
     const QuicSubflowDescriptor& descriptor) const {
   DCHECK(TracksDescriptor(descriptor));
-  return GetParameters(descriptor).in_slow_start;
+  return GetParameters(descriptor).congestion_window
+      < GetParameters(descriptor).ssthresh;
 }
 
 bool MultipathSendAlgorithmInterface::InRecovery(
     const QuicSubflowDescriptor& descriptor) const {
   DCHECK(TracksDescriptor(descriptor));
-  return !GetParameters(descriptor).in_slow_start;
+  return !InSlowStart(descriptor);
 }
 
 QuicByteCount MultipathSendAlgorithmInterface::GetSlowStartThreshold(
     const QuicSubflowDescriptor& descriptor) const {
-  return 0;
+  DCHECK(TracksDescriptor(descriptor));
+  return GetParameters(descriptor).ssthresh;
 }
 
 CongestionControlType MultipathSendAlgorithmInterface::GetCongestionControlType() const {
@@ -215,6 +217,9 @@ bool MultipathSendAlgorithmInterface::IsInitialSecure(
 void MultipathSendAlgorithmInterface::SentOnSubflow(
     const QuicSubflowDescriptor& descriptor, QuicPacketLength length) {
   scheduler_->UsedSubflow(descriptor);
+}
+bool MultipathSendAlgorithmInterface::GetNumberOfSubflows() {
+  return parameters_.size();
 }
 QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextSubflow(
     QuicPacketLength length, bool allowInitialEncryption) {

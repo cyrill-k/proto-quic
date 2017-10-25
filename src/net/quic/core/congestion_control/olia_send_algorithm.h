@@ -24,12 +24,14 @@ namespace net {
 class QuicSubflowDescriptor;
 struct QuicTransmissionInfo;
 
-class QUIC_EXPORT_PRIVATE OliaSendAlgorithm : public MultipathSendAlgorithmInterface {
+class QUIC_EXPORT_PRIVATE OliaSendAlgorithm: public MultipathSendAlgorithmInterface {
 public:
   OliaSendAlgorithm(MultipathSchedulerInterface* scheduler);
-  ~OliaSendAlgorithm() override;
+  ~OliaSendAlgorithm()
+override  ;
 
   const int kInitialRttMs = 100;
+  const double kMultiplicativeDecreaseFactor = 0.7;
 
   void OnCongestionEvent(
       const QuicSubflowDescriptor& descriptor, bool rtt_updated,
@@ -50,11 +52,19 @@ public:
 
 private:
   void Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
-  void Loss(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
+  void Loss(const QuicSubflowDescriptor& descriptor,QuicPacketLength length, QuicByteCount priorInFlight);
+  void AckCongestionAvoidance(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
+  void LossCongestionAvoidance(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
+  QuicByteCount GetMaximumSegmentSize(const QuicSubflowDescriptor& descriptor);
+  QuicByteCount GetMinimumSlowStartThreshold(const QuicSubflowDescriptor& descriptor);
+  QuicByteCount GetMinimumCongestionWindow(const QuicSubflowDescriptor& descriptor);
+  QuicByteCount CongestionWindowAfterPacketLoss(const QuicSubflowDescriptor& descriptor, QuicByteCount currentCongestionWindow);
   QuicByteCount& w(const QuicSubflowDescriptor& descriptor);
   double rtt(const QuicSubflowDescriptor& descriptor);
   void DeterminePaths();
   QuicByteCount l(const QuicSubflowDescriptor& descriptor);
+  bool IsInMaxWPaths(const QuicSubflowDescriptor& descriptor);
+  bool IsInCollectedPaths(const QuicSubflowDescriptor& descriptor);
 
   struct OliaSubflowParameters {
     OliaSubflowParameters() : l1r(0), l2r(0), id(current_id_++) {

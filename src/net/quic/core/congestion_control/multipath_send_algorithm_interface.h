@@ -38,7 +38,8 @@ public:
     virtual void OnLoss(const QuicSubflowDescriptor& subflowDescriptor,
         QuicPacketLength packetLength, QuicByteCount newCongestionWindow) = 0;
     virtual void OnAck(const QuicSubflowDescriptor& subflowDescriptor,
-        QuicPacketLength packetLength, QuicByteCount newCongestionWindow) = 0;
+        QuicPacketLength packetLength, QuicByteCount newCongestionWindow,
+        bool isInSlowStart) = 0;
     virtual void OnRttUpdated(const QuicSubflowDescriptor& subflowDescriptor,
         QuicTime::Delta newRtt) = 0;
   };
@@ -201,6 +202,7 @@ protected:
   virtual bool IsInitialSecure(const QuicSubflowDescriptor& descriptor);
   virtual void SentOnSubflow(const QuicSubflowDescriptor& descriptor,
       QuicPacketLength length);
+  virtual bool GetNumberOfSubflows();
   // Returns the next subflow provided by the scheduler which has enough space in its
   // congestion window to send a packet of size |length|. If there is no such subflow,
   // it returns the next subflow with sufficient encryption even if there is not enough
@@ -224,7 +226,8 @@ protected:
         : rtt_stats(rttStats), congestion_window(
             kInitialCongestionWindow * kDefaultTCPMSS), bytes_in_flight(0), congestion_state(
             SUBFLOW_CONGESTION_SLOWSTART), forward_secure_encryption_established(
-            false), encryption_level(ENCRYPTION_NONE), in_slow_start(false) {
+            false), encryption_level(ENCRYPTION_NONE), in_slow_start(false), ssthresh(
+            std::numeric_limits<QuicByteCount>::max()) {
     }
     RttStats* rtt_stats;
     QuicByteCount congestion_window;
@@ -233,6 +236,7 @@ protected:
     bool forward_secure_encryption_established;
     EncryptionLevel encryption_level;
     bool in_slow_start;
+    QuicByteCount ssthresh;
   };
 
   std::map<QuicSubflowDescriptor, SubflowParameters> parameters_;
@@ -244,6 +248,11 @@ protected:
       const QuicSubflowDescriptor& descriptor) const {
     DCHECK(TracksDescriptor(descriptor));
     return parameters_.at(descriptor);
+  }
+  SubflowParameters& GetMutableParameters(
+      const QuicSubflowDescriptor& descriptor) {
+    DCHECK(TracksDescriptor(descriptor));
+    return parameters_[descriptor];
   }
 
   LoggingInterface* logging_interface_;

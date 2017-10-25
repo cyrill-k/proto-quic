@@ -277,6 +277,7 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
       subflow_id_(subflow_id),
       last_sent_unencrypted_packet_number_(std::numeric_limits<QuicPacketNumber>::max()),
       largest_observed_last_delay_(QuicTime::Delta::Zero()),
+      largest_rtt_measurement_packet_number_(0),
       logging_interface_(nullptr) {
   QUIC_DLOG(INFO) << ENDPOINT
                   << "Created connection with connection_id: " << connection_id;
@@ -414,6 +415,11 @@ bool QuicConnection::HandleIncomingAckFrame(
   if(sent_on_this_subflow && DoesAckFrameProvideRttMeasurement(frame)) {
     rtt_updated = sent_packet_manager_.MaybeUpdateRTT(frame, arrival_time_of_packet);
     largest_rtt_measurement_packet_number_ = frame.largest_observed;
+  }
+  if(!rtt_updated) {
+    QUIC_LOG(INFO) << "sent_on_this_subflow: " << sent_on_this_subflow << " frame.largest_observed: " <<
+        frame.largest_observed << " largest_rtt_measurement_packet_number_: "
+        << largest_rtt_measurement_packet_number_;
   }
 
   if (!IsNewAckFrame(frame)) {

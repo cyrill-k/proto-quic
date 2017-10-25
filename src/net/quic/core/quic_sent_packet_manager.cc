@@ -751,7 +751,7 @@ bool QuicSentPacketManager::MaybeUpdateRTT(const QuicAckFrame& ack_frame,
   for(auto it = sent_times_for_rtt_measurements_.begin();
       it != sent_times_for_rtt_measurements_.end();) {
     if(it->first <= ack_frame.largest_observed) {
-      sent_times_for_rtt_measurements_.erase(it);
+      it = sent_times_for_rtt_measurements_.erase(it);
     } else {
       ++it;
     }

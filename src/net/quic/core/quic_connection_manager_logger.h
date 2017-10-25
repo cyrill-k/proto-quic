@@ -46,7 +46,8 @@ public:
       QuicPacketLength packetLength, QuicByteCount newCongestionWindow) override;
 
   void OnAck(const QuicSubflowDescriptor& subflowDescriptor,
-      QuicPacketLength packetLength, QuicByteCount newCongestionWindow) override;
+      QuicPacketLength packetLength, QuicByteCount newCongestionWindow,
+      bool isInSlowStart) override;
 
   void OnRttUpdated(const QuicSubflowDescriptor& subflowDescriptor,
           QuicTime::Delta newRtt) override;
