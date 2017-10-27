@@ -18,6 +18,7 @@
 #include "net/quic/core/quic_types.h"
 #include "net/quic/core/frames/quic_frame.h"
 #include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
+#include "net/quic/core/congestion_control/multipath_scheduler_algorithm.h"
 
 namespace net {
 
@@ -49,6 +50,8 @@ override  ;
 
   void AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
       RttStats* rttStats) override;
+
+  void SetPacketHandlingMethod(MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod);
 
 private:
   void Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);

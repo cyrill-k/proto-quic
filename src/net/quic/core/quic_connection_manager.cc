@@ -31,13 +31,21 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
 QuicConnectionManager::~QuicConnectionManager() {
   // delete all connections but the first (first connection
   // is not owned by the connection manager)
-  for(QuicConnection* connection: GetAllConnections()) {
-    if(connection != InitialConnection()) {
+  for (QuicConnection* connection : GetAllConnections()) {
+    if (connection != InitialConnection()) {
       delete connection;
     }
   }
   connections_.clear();
   unassigned_subflow_map_.clear();
+}
+
+void QuicConnectionManager::set_congestion_method(
+    MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod,
+    AckHandlingMethod ackHandlingMethod) {
+  static_cast<OliaSendAlgorithm*>(multipath_send_algorithm_.get())->SetPacketHandlingMethod(
+      packetSchedulingMethod);
+  ack_handling_method_ = ackHandlingMethod;
 }
 
 void QuicConnectionManager::CloseConnection(QuicErrorCode error,
@@ -407,7 +415,8 @@ bool QuicConnectionManager::HasAssignedSubflow(
   return subflow_id_map_.find(subflowDescriptor) != subflow_id_map_.end();
 }
 
-QuicConnection* QuicConnectionManager::GetSubflow(QuicSubflowId subflowId) const {
+QuicConnection* QuicConnectionManager::GetSubflow(
+    QuicSubflowId subflowId) const {
   DCHECK(HasSubflow(subflowId));
   return connections_.find(subflowId)->second;
 }
@@ -431,8 +440,8 @@ QuicConnection* QuicConnectionManager::GetConnection(
       return GetSubflow(subflowId);
     } else {
       DCHECK(false)
-          <<
-              "There is a subflow id without corresponding QuicConnection object.";
+      <<
+      "There is a subflow id without corresponding QuicConnection object.";
     }
   }
   if (HasUnassignedSubflow(descriptor)) {
@@ -450,6 +459,18 @@ std::list<QuicConnection*> QuicConnectionManager::GetAllConnections() {
     l.push_back(p.second);
   }
   return l;
+}
+
+QuicSubflowDescriptor QuicConnectionManager::GetLowestRttSubflow() {
+  QuicConnection* lowestRtt = nullptr;
+  for (QuicConnection* connection : GetAllConnections()) {
+    if (connection == nullptr
+        || connection->sent_packet_manager().GetRttStats()->smoothed_rtt()
+            < lowestRtt->sent_packet_manager().GetRttStats()->smoothed_rtt()) {
+      lowestRtt = connection;
+    }
+  }
+  return lowestRtt->SubflowDescriptor();
 }
 
 QuicSubflowId QuicConnectionManager::GetSubflowId(
@@ -557,15 +578,15 @@ bool QuicConnectionManager::OnAckFrame(QuicConnection* connection,
     // The ACK frame is for a packet that was sent on the same subflow.
     // We should only receive an ACK frame with subflow id 0 for a handshake
     // message on the same subflow where the packet was sent.
-    if (!connection->HandleIncomingAckFrame(frame, arrival_time_of_packet, true)) {
+    if (!connection->HandleIncomingAckFrame(frame, arrival_time_of_packet,
+        true)) {
       return false;
     }
     AckReceivedForSubflow(connection, frame);
 
   } else if (HasSubflow(frame.subflow_id)) {
     // Forward the ack frame to the corresponding connection if it exists.
-    QuicConnection *ackFrameConnection =
-        GetSubflow(frame.subflow_id);
+    QuicConnection *ackFrameConnection = GetSubflow(frame.subflow_id);
     if (!ackFrameConnection->HandleIncomingAckFrame(frame,
         arrival_time_of_packet, false)) {
       return false;
@@ -594,7 +615,8 @@ void QuicConnectionManager::OnNewSubflowFrame(QuicConnection* connection,
 void QuicConnectionManager::OnSubflowCloseFrame(QuicConnection* connection,
     const QuicSubflowCloseFrame& frame) {
   if (HasSubflow(frame.subflow_id)) {
-    GetSubflow(frame.subflow_id)->SetSubflowState(QuicConnection::SUBFLOW_CLOSED);
+    GetSubflow(frame.subflow_id)->SetSubflowState(
+        QuicConnection::SUBFLOW_CLOSED);
   } else {
     //TODO error handling
   }
@@ -613,24 +635,29 @@ QuicFrames QuicConnectionManager::GetUpdatedAckFrames(
     usedSubflows.push_back(connection->SubflowDescriptor());
     ++nAckFrames;
 
-    // Only allow sending ACK frames from different subflows if we already
-    // established a secure connection.
-    if (connection->encryption_level() == ENCRYPTION_FORWARD_SECURE) {
+    // Should send additional subflows?
+    if ((ack_handling_method_ == SEND_ON_SMALLEST_RTT
+        && connection->SubflowDescriptor() == GetLowestRttSubflow())
+        || ack_handling_method_ == ROUNDROBIN) {
+      // Only allow sending ACK frames from different subflows if we already
+      // established a secure connection.
+      if (connection->encryption_level() == ENCRYPTION_FORWARD_SECURE) {
 
-      // Only add ACK frames from connections that have already established
-      // a subflow (SUBFLOW_OPEN).
-      const std::list<QuicSubflowDescriptor>& ackFrameSubflows =
-          multipath_send_algorithm_->AppendAckFrames(
-              connection->SubflowDescriptor());
+        // Only add ACK frames from connections that have already established
+        // a subflow (SUBFLOW_OPEN).
+        const std::list<QuicSubflowDescriptor>& ackFrameSubflows =
+            multipath_send_algorithm_->AppendAckFrames(
+                connection->SubflowDescriptor());
 
-      for (auto it = ackFrameSubflows.begin();
-          it != ackFrameSubflows.end() && nAckFrames < kMaxAckFramesPerResponse;
-          ++it) {
-        QuicConnection* subflow = GetConnection(*it);
-        if (subflow != connection && subflow->ack_frame_updated()) {
-          ++nAckFrames;
-          frames.push_back(subflow->GetUpdatedAckFrame(now));
-          usedSubflows.push_back(*it);
+        for (auto it = ackFrameSubflows.begin();
+            it != ackFrameSubflows.end()
+                && nAckFrames < kMaxAckFramesPerResponse; ++it) {
+          QuicConnection* subflow = GetConnection(*it);
+          if (subflow != connection && subflow->ack_frame_updated()) {
+            ++nAckFrames;
+            frames.push_back(subflow->GetUpdatedAckFrame(now));
+            usedSubflows.push_back(*it);
+          }
         }
       }
     }
@@ -735,8 +762,9 @@ void QuicConnectionManager::MarkNewestRetransmissionHandled(
 bool QuicConnectionManager::IsPendingRetransmission(QuicConnection* connection,
     const QuicPacketDescriptor& packetDescriptor) {
   bool isPending = false;
-  for(QuicConnection* connection: GetAllConnections()) {
-    if(connection->sent_packet_manager().HasPendingRetransmission(packetDescriptor)) {
+  for (QuicConnection* connection : GetAllConnections()) {
+    if (connection->sent_packet_manager().HasPendingRetransmission(
+        packetDescriptor)) {
       isPending = true;
       break;
     }
@@ -788,11 +816,13 @@ void QuicConnectionManager::RecordSpuriousRetransmissionStats(
   initialConnection->GetSentPacketManager()->InformLossAlgorithm(*info);
 }
 
-bool QuicConnectionManager::TryRemovingPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) {
+bool QuicConnectionManager::TryRemovingPendingRetransmission(
+    const QuicPacketDescriptor& packetDescriptor) {
   //TODO(cyrill): create a map which points to the subflow that
   // queued up a pending retransmission.
-  for(QuicConnection* connection: GetAllConnections()) {
-    if(connection->GetSentPacketManager()->TryRemovingPendingRetransmission(packetDescriptor)) {
+  for (QuicConnection* connection : GetAllConnections()) {
+    if (connection->GetSentPacketManager()->TryRemovingPendingRetransmission(
+        packetDescriptor)) {
       return true;
     }
   }

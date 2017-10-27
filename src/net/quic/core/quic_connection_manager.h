@@ -20,6 +20,7 @@
 #include "net/quic/core/quic_connection.h"
 #include "net/quic/core/quic_alarm.h"
 #include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
+#include "net/quic/core/congestion_control/multipath_scheduler_algorithm.h"
 #include "net/quic/core/quic_connection_manager_logger.h"
 #include "net/quic/core/quic_connection_resolver.h"
 
@@ -27,10 +28,12 @@ namespace net {
 
 class QUIC_EXPORT_PRIVATE QuicConnectionManagerVisitorInterface {
 public:
-  virtual ~QuicConnectionManagerVisitorInterface() {}
+  virtual ~QuicConnectionManagerVisitorInterface() {
+  }
 
   // A simple visitor interface for dealing with a data frame.
-  virtual void OnStreamFrame(const QuicStreamFrame& frame, QuicConnection* connection) = 0;
+  virtual void OnStreamFrame(const QuicStreamFrame& frame,
+      QuicConnection* connection) = 0;
 
   // The session should process the WINDOW_UPDATE frame, adjusting both stream
   // and connection level flow control windows.
@@ -49,8 +52,7 @@ public:
   // Called when the connection is closed either locally by the framer, or
   // remotely by the peer.
   virtual void OnConnectionClosed(QuicErrorCode error,
-                                  const std::string& error_details,
-                                  ConnectionCloseSource source) = 0;
+      const std::string& error_details, ConnectionCloseSource source) = 0;
 
   // Called when the connection failed to write because the socket was blocked.
   virtual void OnWriteBlocked(QuicBlockedWriterInterface* blocked_writer) = 0;
@@ -62,7 +64,8 @@ public:
   virtual void OnCanWrite(QuicConnection* connection) = 0;
 
   // Called when the connection experiences a change in congestion window.
-  virtual void OnCongestionWindowChange(QuicConnection* connection, QuicTime now) = 0;
+  virtual void OnCongestionWindowChange(QuicConnection* connection,
+      QuicTime now) = 0;
 
   // Called when the connection receives a packet from a migrated client.
   virtual void OnConnectionMigration(PeerAddressChangeType type) = 0;
@@ -99,11 +102,20 @@ public:
   virtual void StartCryptoConnect(QuicConnection* connection) = 0;
 };
 
-class QUIC_EXPORT_PRIVATE QuicConnectionManager:
-  public QuicConnectionVisitorInterface, public QuicConnectionResolver {
+class QUIC_EXPORT_PRIVATE QuicConnectionManager: public QuicConnectionVisitorInterface,
+    public QuicConnectionResolver {
 public:
   QuicConnectionManager(QuicConnection *connection);
-  ~QuicConnectionManager() override;
+  ~QuicConnectionManager()
+override  ;
+
+  enum AckHandlingMethod {
+    SIMPLE, ROUNDROBIN, SEND_ON_SMALLEST_RTT
+  };
+
+  void set_congestion_method(
+      MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod,
+      AckHandlingMethod ackHandlingMethod);
 
   void set_visitor(QuicConnectionManagerVisitorInterface* visitor) {
     visitor_ = visitor;
@@ -179,23 +191,23 @@ public:
       QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener,
       QuicConnection* connection);
   virtual void SendRstStream(QuicStreamId id,
-                             QuicRstStreamErrorCode error,
-                             QuicStreamOffset bytes_written);
+      QuicRstStreamErrorCode error,
+      QuicStreamOffset bytes_written);
   virtual void SendBlocked(QuicStreamId id);
   virtual void SendWindowUpdate(QuicStreamId id, QuicStreamOffset byte_offset);
   virtual void SendGoAway(QuicErrorCode error,
-                          QuicStreamId last_good_stream_id,
-                          const std::string& reason);
-  bool goaway_sent() const { return goaway_sent_; }
-  bool goaway_received() const { return goaway_received_; }
+      QuicStreamId last_good_stream_id,
+      const std::string& reason);
+  bool goaway_sent() const {return goaway_sent_;}
+  bool goaway_received() const {return goaway_received_;}
 
   // Subflow control
   void TryAddingSubflow(QuicSubflowDescriptor descriptor);
   void AddPacketWriter(QuicSubflowDescriptor descriptor, QuicPacketWriter *writer);
   void CloseSubflow(QuicSubflowId id);
   void ProcessUdpPacket(const QuicSocketAddress& self_address,
-                                     const QuicSocketAddress& peer_address,
-                                     const QuicReceivedPacket& packet);
+      const QuicSocketAddress& peer_address,
+      const QuicReceivedPacket& packet);
 
   // Called when the client hello was sent
   void OnHandshakeInitiated(QuicConnection* connection);
@@ -212,9 +224,9 @@ public:
   void OnRstStream(QuicConnection* connection, const QuicRstStreamFrame& frame) override;
   void OnGoAway(QuicConnection* connection, const QuicGoAwayFrame& frame) override;
   void OnConnectionClosed(QuicConnection* connection,
-                                  QuicErrorCode error,
-                                  const std::string& error_details,
-                                  ConnectionCloseSource source) override;
+      QuicErrorCode error,
+      const std::string& error_details,
+      ConnectionCloseSource source) override;
   void OnWriteBlocked(QuicConnection* connection) override;
   void OnSuccessfulVersionNegotiation(QuicConnection* connection, const QuicVersion& version) override;
   void OnCanWrite(QuicConnection* connection) override;
@@ -306,6 +318,8 @@ private:
 
   std::list<QuicConnection*> GetAllConnections();
 
+  QuicSubflowDescriptor GetLowestRttSubflow();
+
   MultipathSendAlgorithmInterface* GetSendAlgorithm() {
     return multipath_send_algorithm_.get();
   }
@@ -337,6 +351,8 @@ private:
 
   // The subflow that will be used as the current subflow as soon as it is open.
   QuicSubflowId next_subflow_id_;
+
+  AckHandlingMethod ack_handling_method_;
 
   std::unique_ptr<MultipathSendAlgorithmInterface> multipath_send_algorithm_;
 

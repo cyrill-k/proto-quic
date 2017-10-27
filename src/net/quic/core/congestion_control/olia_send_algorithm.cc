@@ -62,6 +62,12 @@ void OliaSendAlgorithm::AddSubflow(
           subflowDescriptor, OliaSubflowParameters()));
 }
 
+void OliaSendAlgorithm::SetPacketHandlingMethod(
+    MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod) {
+  static_cast<MultipathSchedulerAlgorithm*>(GetScheduler())->SetPacketSchedulingMethod(
+      packetSchedulingMethod);
+}
+
 void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,
     QuicPacketLength length) {
   if (InSlowStart(descriptor)) {
@@ -71,7 +77,8 @@ void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,
   }
 
   if (logging_interface_) {
-    logging_interface_->OnAck(descriptor, length, w(descriptor), InSlowStart(descriptor));
+    logging_interface_->OnAck(descriptor, length, w(descriptor),
+        InSlowStart(descriptor));
   }
 }
 void OliaSendAlgorithm::Loss(const QuicSubflowDescriptor& descriptor,

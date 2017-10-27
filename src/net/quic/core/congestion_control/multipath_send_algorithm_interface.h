@@ -255,6 +255,8 @@ protected:
     return parameters_[descriptor];
   }
 
+  MultipathSchedulerInterface* GetScheduler() { return scheduler_.get(); }
+
   LoggingInterface* logging_interface_;
 
 private:
