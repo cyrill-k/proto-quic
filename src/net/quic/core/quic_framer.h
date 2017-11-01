@@ -393,6 +393,11 @@ public:
 
   QuicTag last_version_tag() { return last_version_tag_; }
 
+  // Computes the wire size in bytes of the payload of |frame|.
+  size_t ComputeFrameLength(const QuicFrame& frame,
+                            bool last_frame_in_packet,
+                            QuicPacketNumberLength packet_number_length);
+
  private:
   friend class test::QuicFramerPeer;
 
@@ -492,11 +497,6 @@ public:
 
   // Computes the wire size in bytes of the |ack| frame.
   size_t GetAckFrameSize(const QuicAckFrame& ack);
-
-  // Computes the wire size in bytes of the payload of |frame|.
-  size_t ComputeFrameLength(const QuicFrame& frame,
-                            bool last_frame_in_packet,
-                            QuicPacketNumberLength packet_number_length);
 
   static bool AppendPacketNumber(QuicPacketNumberLength packet_number_length,
                                  QuicPacketNumber packet_number,

@@ -24,6 +24,7 @@
 #include "net/tools/quic/quic_packet_reader.h"
 #include "net/tools/quic/quic_process_packet_interface.h"
 #include "net/tools/quic/quic_default_packet_writer.h"
+#include "net/quic/core/quic_multipath_configuration.h"
 
 namespace net {
 
@@ -92,9 +93,9 @@ class QuicMultipathClient : public QuicClientBase,
   QuicPacketWriter* CreateQuicPacketWriter() override;
   void RunEventLoop() override;
   bool CreateUDPSocketAndBind(QuicSocketAddress server_address,
-                              QuicIpAddress bind_to_address,
-                              int bind_to_port) override;
+      QuicSocketAddress client_address) override;
   void CleanUpAllUDPSockets() override;
+  QuicSocketAddress GetNextClientSocketAddress(QuicSocketAddress serverAddress) override;
 
   // If |fd| is an open UDP socket, unregister and close it. Otherwise, do
   // nothing.
@@ -104,6 +105,17 @@ class QuicMultipathClient : public QuicClientBase,
 
  private:
   friend class test::QuicClientPeer;
+
+  bool CreateUDPSocket(QuicSocketAddress server_address,
+      QuicSocketAddress client_address, int* fd);
+  // Creates a UDP socket with a port that is randomly chosen
+  // by the file system.
+  bool CreateUDPSocket(QuicSocketAddress server_address,
+      const QuicIpAddress& clientIpAddress, int *fd, int *port);
+  void AddUDPSocket(int fd, const QuicSubflowDescriptor& subflowDescriptor);
+  QuicSubflowDescriptor GetSubflowDescriptor(int fd, QuicSocketAddress serverAddress);
+  void RegisterUDPSocket(int fd);
+
 
   // Actually clean up |fd|.
   void CleanUpUDPSocketImpl(int fd);
@@ -127,6 +139,8 @@ class QuicMultipathClient : public QuicClientBase,
   std::map<int, std::unique_ptr<QuicDefaultPacketWriter> > fd_to_writer_map_;
   int latest_fd_;
   QuicSocketAddress latest_client_address_;
+
+  unsigned int client_port_counter_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicMultipathClient);
 };

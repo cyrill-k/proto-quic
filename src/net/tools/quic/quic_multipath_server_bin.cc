@@ -80,6 +80,12 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
+  net::QuicIpAddress address = net::QuicIpAddress::Any6();
+  if (line->HasSwitch("host")) {
+    address.FromString(line->GetSwitchValueASCII("host"));
+    LOG(INFO) << "using host: " << address.ToString();
+  }
+
   net::QuicConfig config;
   net::QuicMultipathServer server(
       CreateProofSource(line->GetSwitchValuePath("certificate_file"),
@@ -88,7 +94,9 @@ int main(int argc, char* argv[]) {
       net::AllSupportedVersions(), &response_cache);
 
   int rc = server.CreateUDPSocketAndListen(
-      net::QuicSocketAddress(net::QuicIpAddress::Any6(), FLAGS_port));
+      net::QuicSocketAddress(address, FLAGS_port));
+  //int rc = server.CreateUDPSocketAndListen(
+  //    net::QuicSocketAddress(net::QuicIpAddress::Any6(), FLAGS_port));
   if (rc < 0) {
     return 1;
   }

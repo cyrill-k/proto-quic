@@ -18,6 +18,7 @@
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/tools/quic/quic_client_session.h"
 #include "net/tools/quic/quic_spdy_client_stream.h"
+#include "net/quic/core/quic_multipath_configuration.h"
 
 namespace net {
 
@@ -81,7 +82,7 @@ class QuicClientBase : public QuicClientPushPromiseIndex::Delegate,
   // Initializes the client to create a connection. Should be called exactly
   // once before calling StartConnect or Connect. Returns true if the
   // initialization succeeds, false otherwise.
-  virtual bool Initialize();
+  virtual bool Initialize(const QuicMultipathConfiguration& mpConfiguration);
 
   // "Connect" to the QUIC server, including performing synchronous crypto
   // handshake.
@@ -280,6 +281,8 @@ class QuicClientBase : public QuicClientPushPromiseIndex::Delegate,
   }
 
  protected:
+  virtual QuicSocketAddress GetNextClientSocketAddress(QuicSocketAddress serverAddress) = 0;
+
   // Creates a packet writer to be used for the next connection.
   virtual QuicPacketWriter* CreateQuicPacketWriter() = 0;
 
@@ -293,8 +296,7 @@ class QuicClientBase : public QuicClientPushPromiseIndex::Delegate,
   // Used during initialization: creates the UDP socket FD, sets socket options,
   // and binds the socket to our address.
   virtual bool CreateUDPSocketAndBind(QuicSocketAddress server_address,
-                                      QuicIpAddress bind_to_address,
-                                      int bind_to_port) = 0;
+                                      QuicSocketAddress client_address) = 0;
 
   // Unregister and close all open UDP sockets.
   virtual void CleanUpAllUDPSockets() = 0;
@@ -342,6 +344,8 @@ class QuicClientBase : public QuicClientPushPromiseIndex::Delegate,
   void set_num_stateless_rejects_received(int num_stateless_rejects_received) {
     num_stateless_rejects_received_ = num_stateless_rejects_received;
   }
+
+  QuicMultipathConfiguration multipath_configuration_;
 
  private:
   // Specific QuicClient class for storing data to resend.

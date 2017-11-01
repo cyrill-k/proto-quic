@@ -7,9 +7,9 @@
 namespace net {
 
 MultipathSchedulerAlgorithm::MultipathSchedulerAlgorithm(
-    PacketSchedulingMethod packetSchedulingMethod)
+    QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod)
     : subflow_descriptors_with_rtt_(std::vector<SubflowWithRtt>()), ack_frame_descriptors_(
-        std::vector<QuicSubflowDescriptor>()), current_index_(0), packet_scheduling_method_(
+        std::vector<QuicSubflowDescriptor>()), current_index_(0), packet_scheduling_(
         packetSchedulingMethod) {
 
 }
@@ -32,7 +32,7 @@ void MultipathSchedulerAlgorithm::AddSubflow(
 
 std::list<QuicSubflowDescriptor> MultipathSchedulerAlgorithm::GetSubflowPriority() {
   std::vector<SubflowWithRtt> p;
-  if (packet_scheduling_method_ == SMALLEST_RTT_FIRST) {
+  if (packet_scheduling_ == QuicMultipathConfiguration::PacketScheduling::SMALLEST_RTT_FIRST) {
     p.insert(p.end(), subflow_descriptors_with_rtt_.begin(),
         subflow_descriptors_with_rtt_.end());
     std::sort(p.begin(), p.end(),
@@ -45,12 +45,12 @@ std::list<QuicSubflowDescriptor> MultipathSchedulerAlgorithm::GetSubflowPriority
         subflow_descriptors_with_rtt_.begin() + index);
   }
   std::list<QuicSubflowDescriptor> pOut;
-  std::transform(p.begin(), p.end(), pOut.begin(), [](const SubflowWithRtt& a) { return a.GetSubflowDescriptor(); });
+  std::transform(p.begin(), p.end(), std::back_inserter(pOut), [](const SubflowWithRtt& a) { return a.GetSubflowDescriptor(); });
   return pOut;
 }
 void MultipathSchedulerAlgorithm::UsedSubflow(
     const QuicSubflowDescriptor& descriptor) {
-  if (packet_scheduling_method_ == ROUNDROBIN) {
+  if (packet_scheduling_ == QuicMultipathConfiguration::PacketScheduling::ROUNDROBIN) {
     // Change current index to the next index.
     size_t index = 1;
     for (SubflowWithRtt d : subflow_descriptors_with_rtt_) {
@@ -83,8 +83,8 @@ void MultipathSchedulerAlgorithm::OnAckFrameUpdated(
 }
 
 void MultipathSchedulerAlgorithm::SetPacketSchedulingMethod(
-    PacketSchedulingMethod packetSchedulingMethod) {
-  packet_scheduling_method_ = packetSchedulingMethod;
+    QuicMultipathConfiguration::PacketScheduling packetScheduling) {
+  packet_scheduling_ = packetScheduling;
 }
 
 size_t MultipathSchedulerAlgorithm::AdvanceIndex() {

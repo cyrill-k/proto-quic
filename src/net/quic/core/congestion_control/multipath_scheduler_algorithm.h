@@ -12,16 +12,13 @@
 
 #include "net/quic/core/congestion_control/multipath_scheduler_interface.h"
 #include "net/quic/platform/api/quic_subflow_descriptor.h"
+#include "net/quic/core/quic_multipath_configuration.h"
 
 namespace net {
 
 class QUIC_EXPORT_PRIVATE MultipathSchedulerAlgorithm: public MultipathSchedulerInterface {
 public:
-  enum PacketSchedulingMethod {
-    ROUNDROBIN, SMALLEST_RTT_FIRST
-  };
-
-  MultipathSchedulerAlgorithm(PacketSchedulingMethod packetSchedulingMethod);
+  MultipathSchedulerAlgorithm(QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod);
 
   ~MultipathSchedulerAlgorithm() override;
 
@@ -38,7 +35,7 @@ public:
 
   void OnAckFrameUpdated(const QuicSubflowDescriptor& descriptor) override;
 
-  void SetPacketSchedulingMethod(PacketSchedulingMethod packetSchedulingMethod);
+  void SetPacketSchedulingMethod(QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod);
 
 private:
   size_t AdvanceIndex();
@@ -64,7 +61,7 @@ private:
 
   size_t current_index_;
 
-  PacketSchedulingMethod packet_scheduling_method_;
+  QuicMultipathConfiguration::PacketScheduling packet_scheduling_;
 
   DISALLOW_COPY_AND_ASSIGN(MultipathSchedulerAlgorithm);
 };

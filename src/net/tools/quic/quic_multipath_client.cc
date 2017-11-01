@@ -64,7 +64,8 @@ QuicMultipathClient::QuicMultipathClient(QuicSocketAddress server_address,
       epoll_server_(epoll_server),
       packets_dropped_(0),
       overflow_supported_(false),
-      packet_reader_(new QuicPacketReader()) {
+      packet_reader_(new QuicPacketReader()),
+      client_port_counter_(0) {
   set_server_address(server_address);
 }
 
@@ -84,7 +85,23 @@ void QuicMultipathClient::UseSubflowId(QuicSubflowId subflowId) {
 }
 
 void QuicMultipathClient::AddSubflow() {
-  // open socket
+  int fd;
+  if(!CreateUDPSocket(server_address(), GetNextClientSocketAddress(server_address()), &fd)) {
+    DCHECK(false);
+  }
+
+  QuicSubflowDescriptor subflowDescriptor = GetSubflowDescriptor(fd, server_address());
+  AddUDPSocket(fd, subflowDescriptor);
+
+  // add subflow
+  session()->connection_manager()->AddPacketWriter(subflowDescriptor,fd_to_writer_map_[fd].get());
+  session()->connection_manager()->TryAddingSubflow(subflowDescriptor);
+
+  RegisterUDPSocket(fd);
+
+
+
+  /*// open socket
   int fd, port;
   CreateUDPSocketWithRandomPortAndConnectTo(server_address(),GetLatestClientAddress().host(),&fd,&port);
 
@@ -98,7 +115,7 @@ void QuicMultipathClient::AddSubflow() {
   session()->connection_manager()->TryAddingSubflow(d);
 
   // register fd
-  epoll_server_->RegisterFD(fd, this, kEpollFlags);
+  epoll_server_->RegisterFD(fd, this, kEpollFlags);*/
 }
 
 bool QuicMultipathClient::CreateUDPSocketWithRandomPortAndConnectTo(const QuicSocketAddress& serverAddress, const QuicIpAddress& localIpAddress, int *fd, int *port) {
@@ -131,11 +148,25 @@ bool QuicMultipathClient::CreateUDPSocketWithRandomPortAndConnectTo(const QuicSo
 }
 
 bool QuicMultipathClient::CreateUDPSocketAndBind(QuicSocketAddress server_address,
-                                        QuicIpAddress bind_to_address,
-                                        int bind_to_port) {
+    QuicSocketAddress client_address) {
   epoll_server_->set_timeout_in_us(50 * 1000);
 
-  int fd =
+  int fd;
+  if(!CreateUDPSocket(server_address, client_address, &fd)) {
+    return false;
+  }
+
+  QuicSubflowDescriptor subflowDescriptor = GetSubflowDescriptor(fd, server_address);
+  AddUDPSocket(fd, subflowDescriptor);
+
+  // TODO(cyrill): necessary?
+  latest_fd_ = fd;
+  latest_client_address_ = subflowDescriptor.Self();
+
+  RegisterUDPSocket(fd);
+  return true;
+
+  /*int fd =
       QuicSocketUtils::CreateUDPSocket(server_address, &overflow_supported_);
   if (fd < 0) {
     return false;
@@ -168,7 +199,55 @@ bool QuicMultipathClient::CreateUDPSocketAndBind(QuicSocketAddress server_addres
   latest_client_address_ = client_address;
 
   epoll_server_->RegisterFD(fd, this, kEpollFlags);
+  return true;*/
+}
+
+bool QuicMultipathClient::CreateUDPSocket(QuicSocketAddress serverAddress,
+    QuicSocketAddress clientAddress, int* fd) {
+
+  *fd =
+      QuicSocketUtils::CreateUDPSocket(serverAddress, &overflow_supported_);
+  if (*fd < 0) {
+    return false;
+  }
+
+  sockaddr_storage addr = clientAddress.generic_address();
+  int rc = bind(*fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+  if (rc < 0) {
+    QUIC_LOG(ERROR) << "Bind failed: " << strerror(errno);
+    return false;
+  }
+
   return true;
+}
+bool QuicMultipathClient::CreateUDPSocket(QuicSocketAddress serverAddress,
+    const QuicIpAddress& clientIpAddress, int *fd, int *port) {
+  if(!CreateUDPSocket(serverAddress, QuicSocketAddress(clientIpAddress, 0), fd)) {
+    return false;
+  }
+  *port = GetSubflowDescriptor(*fd, serverAddress).Self().port();
+
+  return true;
+}
+void QuicMultipathClient::AddUDPSocket(int fd, const QuicSubflowDescriptor& subflowDescriptor) {
+  // add socket to client
+  fd_to_subflow_map_[fd] = subflowDescriptor;
+  fd_to_writer_map_[fd] = CreateWriter(fd);
+}
+QuicSubflowDescriptor QuicMultipathClient::GetSubflowDescriptor(int fd,
+    QuicSocketAddress serverAddress) {
+  // Read out port
+  QuicSocketAddress clientAddress;
+  if (clientAddress.FromSocket(fd) != 0) {
+    QUIC_LOG(ERROR) << "Unable to get self address.  Error: "
+                    << strerror(errno);
+    return QuicSubflowDescriptor();
+  }
+
+  return QuicSubflowDescriptor(clientAddress, serverAddress);
+}
+void QuicMultipathClient::RegisterUDPSocket(int fd) {
+  epoll_server_->RegisterFD(fd, this, kEpollFlags);
 }
 
 void QuicMultipathClient::CleanUpUDPSocket(int fd) {
@@ -181,6 +260,26 @@ void QuicMultipathClient::CleanUpAllUDPSockets() {
     CleanUpUDPSocketImpl(fd_address.first);
   }
   fd_to_subflow_map_.clear();
+}
+
+QuicSocketAddress QuicMultipathClient::GetNextClientSocketAddress(QuicSocketAddress serverAddress) {
+  // Either use last known ip address or use loopback ip address.
+  QuicIpAddress clientIpAddress;
+  if (bind_to_address().IsInitialized()) {
+    clientIpAddress = bind_to_address();
+  } else if (serverAddress.host().address_family() == IpAddressFamily::IP_V4) {
+    clientIpAddress = QuicIpAddress::Loopback4();
+  } else {
+    clientIpAddress = QuicIpAddress::Loopback6();
+  }
+
+  // Either use a predefined set of client ports or choose a random port.
+  if(client_port_counter_ < multipath_configuration_.GetClientPorts().size()) {
+    return QuicSocketAddress(clientIpAddress, multipath_configuration_.GetClientPorts()[client_port_counter_++]);
+  } else {
+    // port == 0 means choosing a random port.
+    return QuicSocketAddress(clientIpAddress, 0);
+  }
 }
 
 void QuicMultipathClient::CleanUpUDPSocketImpl(int fd) {

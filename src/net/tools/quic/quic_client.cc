@@ -79,8 +79,10 @@ QuicClient::~QuicClient() {
 }
 
 bool QuicClient::CreateUDPSocketAndBind(QuicSocketAddress server_address,
-                                        QuicIpAddress bind_to_address,
-                                        int bind_to_port) {
+                                        QuicSocketAddress client_address) {
+  QuicIpAddress bind_to_address = client_address.host();
+  int bind_to_port = client_address.port();
+
   epoll_server_->set_timeout_in_us(50 * 1000);
 
   int fd =

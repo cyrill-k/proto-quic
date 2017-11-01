@@ -109,13 +109,9 @@ public:
   ~QuicConnectionManager()
 override  ;
 
-  enum AckHandlingMethod {
-    SIMPLE, ROUNDROBIN, SEND_ON_SMALLEST_RTT
-  };
-
   void set_congestion_method(
-      MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod,
-      AckHandlingMethod ackHandlingMethod);
+      QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod,
+      QuicMultipathConfiguration::AckSending ackHandlingMethod);
 
   void set_visitor(QuicConnectionManagerVisitorInterface* visitor) {
     visitor_ = visitor;
@@ -352,7 +348,7 @@ private:
   // The subflow that will be used as the current subflow as soon as it is open.
   QuicSubflowId next_subflow_id_;
 
-  AckHandlingMethod ack_handling_method_;
+  QuicMultipathConfiguration::AckSending ack_sending_;
 
   std::unique_ptr<MultipathSendAlgorithmInterface> multipath_send_algorithm_;
 

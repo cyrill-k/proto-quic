@@ -63,7 +63,7 @@ void OliaSendAlgorithm::AddSubflow(
 }
 
 void OliaSendAlgorithm::SetPacketHandlingMethod(
-    MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod) {
+    QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod) {
   static_cast<MultipathSchedulerAlgorithm*>(GetScheduler())->SetPacketSchedulingMethod(
       packetSchedulingMethod);
 }

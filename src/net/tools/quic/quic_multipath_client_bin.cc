@@ -39,6 +39,7 @@
 //   quic_client http://www.example.com --host=${IP}
 
 #include <iostream>
+#include <string>
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
@@ -65,6 +66,9 @@
 #include "net/tools/quic/synchronous_host_resolver.h"
 #include "net/tools/quic/quic_multipath_client.h"
 #include "net/quic/core/quic_types.h"
+#include "net/quic/core/quic_connection_manager.h"
+#include "net/quic/core/congestion_control/multipath_scheduler_algorithm.h"
+#include "net/quic/core/quic_multipath_configuration.h"
 
 using net::CertVerifier;
 using net::CTPolicyEnforcer;
@@ -83,6 +87,9 @@ using std::endl;
 using std::string;
 using std::cin;
 using net::QuicSubflowId;
+using net::QuicConnectionManager;
+using net::MultipathSchedulerAlgorithm;
+using net::QuicMultipathConfiguration;
 
 // The IP or hostname the quic client will connect to.
 string FLAGS_host = "";
@@ -162,9 +169,9 @@ void RequestSite(net::QuicMultipathClient& client,
     cout << "headers: " << client.latest_response_headers() << endl;
     string response_body = client.latest_response_body();
     if (!FLAGS_body_hex.empty()) {
-      cout << "body:\n" << QuicTextUtils::HexDump(response_body) << endl;
+      cout << "body(" << response_body.size() << "):\n" << (response_body.size() > 2000 ? "" : QuicTextUtils::HexDump(response_body)) << endl;
     } else {
-      cout << "body: " << response_body << endl;
+      cout << "body(" << response_body.size() << "): " << (response_body.size() > 2000 ? "" : response_body) << endl;
     }
     cout << "trailers: " << client.latest_response_trailers() << endl;
   }
@@ -220,7 +227,10 @@ int main(int argc, char* argv[]) {
         "is considered to be a successful response, otherwise a failure\n"
         "--initial_mtu=<initial_mtu> specify the initial MTU of the connection"
         "\n"
-        "--disable-certificate-verification do not verify certificates\n";
+        "--disable-certificate-verification do not verify certificates\n"
+        "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
+        "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
+        "--client-ports              List of client ports used: port0,port1,...\n";
     cout << help_str;
     exit(0);
   }
@@ -263,6 +273,34 @@ int main(int argc, char* argv[]) {
                            &FLAGS_initial_mtu)) {
       std::cerr << "--initial_mtu must be an integer\n";
       return 1;
+    }
+  }
+  QuicMultipathConfiguration::AckSending ackHandlingMethod = QuicMultipathConfiguration::DEFAULT_ACK_HANDLING;
+  if (line->HasSwitch("ack")) {
+    if(line->GetSwitchValueASCII("ack") == "simple") {
+      ackHandlingMethod = QuicMultipathConfiguration::AckSending::SIMPLE;
+    } else if(line->GetSwitchValueASCII("ack") == "roundrobin") {
+      ackHandlingMethod = QuicMultipathConfiguration::AckSending::ROUNDROBIN;
+    } else if(line->GetSwitchValueASCII("ack") == "smallestrtt") {
+      ackHandlingMethod = QuicMultipathConfiguration::AckSending::SEND_ON_SMALLEST_RTT;
+    }
+  }
+  QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod = QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING;
+  if (line->HasSwitch("pkt")) {
+    if(line->GetSwitchValueASCII("pkt") == "roundrobin") {
+      packetSchedulingMethod = QuicMultipathConfiguration::PacketScheduling::ROUNDROBIN;
+    } else if(line->GetSwitchValueASCII("pkt") == "smallestrtt") {
+      packetSchedulingMethod = QuicMultipathConfiguration::PacketScheduling::SMALLEST_RTT_FIRST;
+    }
+  }
+  std::vector<unsigned int> clientPorts;
+  if (line->HasSwitch("client-ports")) {
+    std::stringstream commaPortList(line->GetSwitchValueASCII("client-ports"));
+    std::string segment;
+    while(std::getline(commaPortList, segment, ','))
+    {
+      unsigned int port = std::atoi(segment.c_str());
+      clientPorts.push_back(port);
     }
   }
 
@@ -332,7 +370,8 @@ int main(int argc, char* argv[]) {
                          versions, &epoll_server, std::move(proof_verifier));
   client.set_initial_max_packet_length(
       FLAGS_initial_mtu != 0 ? FLAGS_initial_mtu : net::kDefaultMaxPacketSize);
-  if (!client.Initialize()) {
+  QuicMultipathConfiguration mpConfig(packetSchedulingMethod, ackHandlingMethod, clientPorts);
+  if (!client.Initialize(mpConfig)) {
     cerr << "Failed to initialize client." << endl;
     return 1;
   }
@@ -387,15 +426,9 @@ int main(int argc, char* argv[]) {
   client.AddSubflow();
   //client.AddSubflow();
   //client.UseSubflowId(3);
-
-  cout << "++++++++++ Request site #1" << endl;
-  RequestSite(client, header_block, body);
-
-  int test;
-  cin >> test;
-
-  cout << "++++++++++ Request site #2" << endl;
-  RequestSite(client, header_block, body);
+  for(int i = 0; i < 10; ++i) {
+    RequestSite(client, header_block, body);
+  }
 
   return Response(client);
 }

@@ -51,7 +51,7 @@ override  ;
   void AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
       RttStats* rttStats) override;
 
-  void SetPacketHandlingMethod(MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod);
+  void SetPacketHandlingMethod(QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod);
 
 private:
   void Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);

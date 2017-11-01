@@ -901,7 +901,7 @@ bool QuicConnection::OnPacketHeader(const QuicPacketHeader& header) {
   }
 
   --stats_.packets_dropped;
-  QUIC_DVLOG(1) << ENDPOINT << "Received packet header: " << header;
+  QUIC_DVLOG(1) << ENDPOINT << "subid=" << GetSubflowId() << " " << "Received packet header: " << header;
   last_header_ = header;
   // An ack will be sent if a missing retransmittable packet was received;
   was_last_packet_missing_ =
@@ -1321,9 +1321,6 @@ QuicConsumedData QuicConnection::SendStreamData(
   if (state == NO_FIN && iov.total_length == 0) {
     QUIC_BUG << "Attempt to send empty stream frame";
     return QuicConsumedData(0, false);
-  }
-  if(logging_interface_) {
-    logging_interface_->OnStreamFrameSent(this, id, iov.total_length);
   }
 
   // Opportunistically bundle an ack with every outgoing packet.
@@ -1773,14 +1770,14 @@ bool QuicConnection::WritePacket(SerializedPacket* packet) {
 
   DCHECK_LE(encrypted_length, kMaxPacketSize);
   DCHECK_LE(encrypted_length, packet_generator_.GetCurrentMaxPacketLength());
-  QUIC_DVLOG(1) << ENDPOINT << "Sending packet " << packet_number << " : "
+  QUIC_DVLOG(1) << ENDPOINT << "subid=" << GetSubflowId() << " "
+                << "Sending packet " << packet_number << " : "
                 << (IsRetransmittable(*packet) == HAS_RETRANSMITTABLE_DATA
                         ? "data bearing "
                         : " ack only ")
                 << ", encryption level: "
                 << QuicUtils::EncryptionLevelToString(packet->encryption_level)
-                << ", encrypted length:" << encrypted_length
-                << ", on subflow: " << subflow_id_;
+                << ", encrypted length:" << encrypted_length;
   QUIC_DVLOG(2) << ENDPOINT << "packet(" << packet_number << "): " << std::endl
                 << QuicTextUtils::HexDump(QuicStringPiece(
                        packet->encrypted_buffer, encrypted_length));
@@ -1962,8 +1959,12 @@ void QuicConnection::OnSerializedPacket(SerializedPacket* serialized_packet) {
 }
 
 void QuicConnection::OnFrameAddedToPacket(const QuicFrame& frame, QuicByteCount frameLength) {
-  if(logging_interface_ != nullptr && frame.type == ACK_FRAME) {
-    logging_interface_->OnAckSent(this, frameLength);
+  if(logging_interface_) {
+    if(frame.type == ACK_FRAME) {
+      logging_interface_->OnAckSent(this, frameLength);
+    } else if(frame.type == STREAM_FRAME) {
+      logging_interface_->OnStreamFrameSent(this, frame.stream_frame->stream_id, frameLength);
+    }
   }
 }
 

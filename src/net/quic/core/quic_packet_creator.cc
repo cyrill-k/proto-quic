@@ -417,6 +417,11 @@ void QuicPacketCreator::CreateAndSerializeStreamFrame(
     QUIC_BUG << "Failed to encrypt packet number " << header.packet_number;
     return;
   }
+  if(logging_delegate_ != nullptr) {
+    logging_delegate_->OnFrameAddedToPacket(
+        QuicFrame(frame.get()), framer_->ComputeFrameLength(
+            QuicFrame(frame.get()), true, packet_.packet_number_length));
+  }
   // TODO(ianswett): Optimize the storage so RetransmitableFrames can be
   // unioned with a QuicStreamFrame and a UniqueStreamBuffer.
   *num_bytes_consumed = bytes_consumed;

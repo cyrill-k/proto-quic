@@ -83,7 +83,8 @@ void QuicClientBase::OnClose(QuicSpdyStream* stream) {
   }
 }
 
-bool QuicClientBase::Initialize() {
+bool QuicClientBase::Initialize(const QuicMultipathConfiguration& mpConfiguration) {
+  multipath_configuration_ = mpConfiguration;
   num_sent_client_hellos_ = 0;
   num_stateless_rejects_received_ = 0;
   connection_error_ = QUIC_NO_ERROR;
@@ -103,7 +104,7 @@ bool QuicClientBase::Initialize() {
         kSessionMaxRecvWindowSize);
   }
 
-  if (!CreateUDPSocketAndBind(server_address_, bind_to_address_, local_port_)) {
+  if (!CreateUDPSocketAndBind(server_address_, GetNextClientSocketAddress(server_address_))) {
     return false;
   }
 
@@ -164,6 +165,9 @@ void QuicClientBase::StartConnect() {
       writer,
       /* owns_writer= */ false, Perspective::IS_CLIENT, supported_versions(),
       kInitialSubflowId, nullptr));
+  session_->connection_manager()->set_congestion_method(
+      multipath_configuration_.GetPacketSchedulingConfiguration(),
+      multipath_configuration_.GetAckSendingConfiguration());
 
   // Reset |writer()| after |session()| so that the old writer outlives the old
   // session.

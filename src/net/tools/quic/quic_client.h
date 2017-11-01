@@ -80,8 +80,7 @@ class QuicClient : public QuicClientBase,
   QuicPacketWriter* CreateQuicPacketWriter() override;
   void RunEventLoop() override;
   bool CreateUDPSocketAndBind(QuicSocketAddress server_address,
-                              QuicIpAddress bind_to_address,
-                              int bind_to_port) override;
+                              QuicSocketAddress client_address) override;
   void CleanUpAllUDPSockets() override;
 
   // If |fd| is an open UDP socket, unregister and close it. Otherwise, do

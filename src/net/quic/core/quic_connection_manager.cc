@@ -19,13 +19,16 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
         std::map<QuicSubflowId, QuicConnection*>()), next_outgoing_subflow_id_(
         connection->perspective() == Perspective::IS_SERVER ? 2 : 3), current_subflow_id_(
         kInitialSubflowId), next_subflow_id_(0), multipath_send_algorithm_(
-        new OliaSendAlgorithm(new RoundRobinAlgorithm())), logger_(
+        new OliaSendAlgorithm(
+            new MultipathSchedulerAlgorithm(
+                QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING))), logger_(
         new QuicConnectionManagerLogger("test.out", connection->clock(), this)) {
   connection->SetMultipathSendAlgorithm(GetSendAlgorithm());
   AddConnection(connection->SubflowDescriptor(), kInitialSubflowId, connection);
   connection->set_visitor(this);
   connection->set_logging_visitor(logger_.get());
   multipath_send_algorithm_->setLoggingInterface(logger_.get());
+  ack_sending_ = QuicMultipathConfiguration::DEFAULT_ACK_HANDLING;
 }
 
 QuicConnectionManager::~QuicConnectionManager() {
@@ -41,11 +44,11 @@ QuicConnectionManager::~QuicConnectionManager() {
 }
 
 void QuicConnectionManager::set_congestion_method(
-    MultipathSchedulerAlgorithm::PacketSchedulingMethod packetSchedulingMethod,
-    AckHandlingMethod ackHandlingMethod) {
+    QuicMultipathConfiguration::PacketScheduling packetScheduling,
+    QuicMultipathConfiguration::AckSending ackSending) {
   static_cast<OliaSendAlgorithm*>(multipath_send_algorithm_.get())->SetPacketHandlingMethod(
-      packetSchedulingMethod);
-  ack_handling_method_ = ackHandlingMethod;
+      packetScheduling);
+  ack_sending_ = ackSending;
 }
 
 void QuicConnectionManager::CloseConnection(QuicErrorCode error,
@@ -464,7 +467,7 @@ std::list<QuicConnection*> QuicConnectionManager::GetAllConnections() {
 QuicSubflowDescriptor QuicConnectionManager::GetLowestRttSubflow() {
   QuicConnection* lowestRtt = nullptr;
   for (QuicConnection* connection : GetAllConnections()) {
-    if (connection == nullptr
+    if (lowestRtt == nullptr
         || connection->sent_packet_manager().GetRttStats()->smoothed_rtt()
             < lowestRtt->sent_packet_manager().GetRttStats()->smoothed_rtt()) {
       lowestRtt = connection;
@@ -636,9 +639,10 @@ QuicFrames QuicConnectionManager::GetUpdatedAckFrames(
     ++nAckFrames;
 
     // Should send additional subflows?
-    if ((ack_handling_method_ == SEND_ON_SMALLEST_RTT
+    if ((ack_sending_
+        == QuicMultipathConfiguration::AckSending::SEND_ON_SMALLEST_RTT
         && connection->SubflowDescriptor() == GetLowestRttSubflow())
-        || ack_handling_method_ == ROUNDROBIN) {
+        || ack_sending_ == QuicMultipathConfiguration::AckSending::ROUNDROBIN) {
       // Only allow sending ACK frames from different subflows if we already
       // established a secure connection.
       if (connection->encryption_level() == ENCRYPTION_FORWARD_SECURE) {
