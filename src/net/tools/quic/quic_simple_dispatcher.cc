@@ -15,14 +15,16 @@ QuicSimpleDispatcher::QuicSimpleDispatcher(
     std::unique_ptr<QuicConnectionHelperInterface> helper,
     std::unique_ptr<QuicCryptoServerStream::Helper> session_helper,
     std::unique_ptr<QuicAlarmFactory> alarm_factory,
-    QuicHttpResponseCache* response_cache)
+    QuicHttpResponseCache* response_cache,
+    const QuicMultipathConfiguration& multipathConfiguration)
     : QuicDispatcher(config,
                      crypto_config,
                      version_manager,
                      std::move(helper),
                      std::move(session_helper),
                      std::move(alarm_factory)),
-      response_cache_(response_cache) {}
+      response_cache_(response_cache),
+      multipath_configuration_(multipathConfiguration) {}
 
 QuicSimpleDispatcher::~QuicSimpleDispatcher() {}
 
@@ -60,6 +62,9 @@ QuicServerSessionBase* QuicSimpleDispatcher::CreateQuicSession(
   QuicServerSessionBase* session = new QuicSimpleServerSession(
       config(), connection, this, session_helper(), crypto_config(),
       compressed_certs_cache(), response_cache_);
+  session->connection_manager()->set_congestion_method(
+      multipath_configuration_.GetPacketSchedulingConfiguration(),
+      multipath_configuration_.GetAckSendingConfiguration());
   session->Initialize();
   return session;
 }

@@ -57,14 +57,16 @@ QuicMultipathServer::QuicMultipathServer(std::unique_ptr<ProofSource> proof_sour
                  QuicConfig(),
                  QuicCryptoServerConfig::ConfigOptions(),
                  AllSupportedVersions(),
-                 response_cache) {}
+                 response_cache,
+                 QuicMultipathConfiguration()) {}
 
 QuicMultipathServer::QuicMultipathServer(
     std::unique_ptr<ProofSource> proof_source,
     const QuicConfig& config,
     const QuicCryptoServerConfig::ConfigOptions& crypto_config_options,
     const QuicVersionVector& supported_versions,
-    QuicHttpResponseCache* response_cache)
+    QuicHttpResponseCache* response_cache,
+    const QuicMultipathConfiguration& multipathConfiguration)
     : port_(0),
       fd_(-1),
       packets_dropped_(0),
@@ -77,7 +79,8 @@ QuicMultipathServer::QuicMultipathServer(
       crypto_config_options_(crypto_config_options),
       version_manager_(supported_versions),
       packet_reader_(new QuicPacketReader()),
-      response_cache_(response_cache) {
+      response_cache_(response_cache),
+      multipath_configuration_(multipathConfiguration) {
   Initialize();
 }
 
@@ -157,7 +160,8 @@ QuicDispatcher* QuicMultipathServer::CreateQuicDispatcher() {
           new QuicSimpleCryptoServerStreamHelper(QuicRandom::GetInstance())),
       std::unique_ptr<QuicEpollAlarmFactory>(
           new QuicEpollAlarmFactory(&epoll_server_)),
-      response_cache_);
+      response_cache_,
+      multipath_configuration_);
 }
 
 void QuicMultipathServer::WaitForEvents() {

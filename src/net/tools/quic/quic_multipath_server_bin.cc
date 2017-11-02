@@ -18,13 +18,15 @@
 #include "net/quic/platform/api/quic_socket_address.h"
 #include "net/tools/quic/quic_http_response_cache.h"
 #include "net/tools/quic/quic_multipath_server.h"
+#include "net/quic/core/quic_multipath_configuration.h"
+
+using net::QuicMultipathConfiguration;
 
 // The port the quic server will listen on.
 int32_t FLAGS_port = 6121;
 
 std::unique_ptr<net::ProofSource> CreateProofSource(
-    const base::FilePath& cert_path,
-    const base::FilePath& key_path) {
+    const base::FilePath& cert_path, const base::FilePath& key_path) {
   std::unique_ptr<net::ProofSourceChromium> proof_source(
       new net::ProofSourceChromium());
   CHECK(proof_source->Initialize(cert_path, key_path, base::FilePath()));
@@ -43,8 +45,7 @@ int main(int argc, char* argv[]) {
   CHECK(logging::InitLogging(settings));
 
   if (line->HasSwitch("h") || line->HasSwitch("help")) {
-    const char* help_str =
-        "Usage: quic_server [options]\n"
+    const char* help_str = "Usage: quic_server [options]\n"
         "\n"
         "Options:\n"
         "-h, --help                  show this help message and exit\n"
@@ -52,7 +53,9 @@ int main(int argc, char* argv[]) {
         "--quic_response_cache_dir  directory containing response data\n"
         "                            to load\n"
         "--certificate_file=<file>   path to the certificate chain\n"
-        "--key_file=<file>           path to the pkcs8 private key\n";
+        "--key_file=<file>           path to the pkcs8 private key\n"
+        "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
+        "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n";
     std::cout << help_str;
     exit(0);
   }
@@ -86,12 +89,40 @@ int main(int argc, char* argv[]) {
     LOG(INFO) << "using host: " << address.ToString();
   }
 
+  QuicMultipathConfiguration::AckSending ackHandlingMethod =
+      QuicMultipathConfiguration::DEFAULT_ACK_HANDLING;
+  if (line->HasSwitch("ack")) {
+    if (line->GetSwitchValueASCII("ack") == "simple") {
+      ackHandlingMethod = QuicMultipathConfiguration::AckSending::SIMPLE;
+    } else if (line->GetSwitchValueASCII("ack") == "roundrobin") {
+      ackHandlingMethod = QuicMultipathConfiguration::AckSending::ROUNDROBIN;
+    } else if (line->GetSwitchValueASCII("ack") == "smallestrtt") {
+      ackHandlingMethod =
+          QuicMultipathConfiguration::AckSending::SEND_ON_SMALLEST_RTT;
+    }
+  }
+
+  QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod =
+      QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING;
+  if (line->HasSwitch("pkt")) {
+    if (line->GetSwitchValueASCII("pkt") == "roundrobin") {
+      packetSchedulingMethod =
+          QuicMultipathConfiguration::PacketScheduling::ROUNDROBIN;
+    } else if (line->GetSwitchValueASCII("pkt") == "smallestrtt") {
+      packetSchedulingMethod =
+          QuicMultipathConfiguration::PacketScheduling::SMALLEST_RTT_FIRST;
+    }
+  }
+
+  QuicMultipathConfiguration mpConf =
+      QuicMultipathConfiguration::CreateServerConfiguration(
+          packetSchedulingMethod, ackHandlingMethod);
   net::QuicConfig config;
   net::QuicMultipathServer server(
       CreateProofSource(line->GetSwitchValuePath("certificate_file"),
-                        line->GetSwitchValuePath("key_file")),
-      config, net::QuicCryptoServerConfig::ConfigOptions(),
-      net::AllSupportedVersions(), &response_cache);
+          line->GetSwitchValuePath("key_file")), config,
+      net::QuicCryptoServerConfig::ConfigOptions(), net::AllSupportedVersions(),
+      &response_cache, mpConf);
 
   int rc = server.CreateUDPSocketAndListen(
       net::QuicSocketAddress(address, FLAGS_port));

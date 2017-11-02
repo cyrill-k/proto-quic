@@ -52,6 +52,8 @@ public:
   void OnRttUpdated(const QuicSubflowDescriptor& subflowDescriptor,
           QuicTime::Delta newRtt) override;
 
+  void OnSuccessfulHttpRequest(QuicTime::Delta requestDelta);
+
 private:
   struct Statistic {
     Statistic();
@@ -87,6 +89,7 @@ private:
   const std::string EVENT_LOSS_ALGORITHM_ACK = "LOSS_ALGORITHM_ACK";
   const std::string EVENT_LOSS_ALGORITHM_LOSS = "LOSS_ALGORITHM_LOSS";
   const std::string EVENT_LOSS_ALGORITHM_RTT = "LOSS_ALGORITHM_RTT";
+  const std::string EVENT_SUCCESSFUL_HTTP_REQUEST = "SUCCESSFUL_HTTP_REQUEST";
 
   const QuicClock* clock_;
 

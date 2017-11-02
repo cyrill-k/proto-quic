@@ -247,7 +247,12 @@ void QuicSession::OnCanWrite(QuicConnection *connection) {
                       ConnectionCloseBehavior::SILENT_CLOSE);
       return;
     }
-    if (!connection->CanWriteStreamData()) {
+    // TODO(cyrill): return if stream->OnCanWrite() does not provide a subflow to write because of congestion
+    QuicStreamId nextStreamId = write_blocked_streams_.Front();
+    QuicStream* nextWriteBlockedStream = GetOrCreateStream(nextStreamId);
+    QuicConnection* nextStreamSubflow = connection_manager()->GetConnectionForNextStreamFrame(
+        nextStreamId, nextWriteBlockedStream->GetConnectionForNextQueuedData());
+    if (!nextStreamSubflow->CanWriteStreamData()) {
       return;
     }
     currently_writing_stream_id_ = write_blocked_streams_.PopFront();

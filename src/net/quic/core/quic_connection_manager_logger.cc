@@ -181,10 +181,13 @@ void QuicConnectionManagerLogger::OnRttUpdated(
   RecordEvent(EVENT_LOSS_ALGORITHM_RTT, id, s);
 }
 
+void QuicConnectionManagerLogger::OnSuccessfulHttpRequest(QuicTime::Delta requestDelta) {
+  std::string s = std::to_string(requestDelta.ToMicroseconds());
+  RecordEvent(EVENT_SUCCESSFUL_HTTP_REQUEST, 0, s);
+}
+
 void QuicConnectionManagerLogger::RecordEvent(std::string eventType,
     QuicSubflowId id, std::string content) {
-  if (id == 0)
-    return;
 
   QUIC_LOG(INFO) << id << " " << eventType << ": " << content;
 

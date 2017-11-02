@@ -187,6 +187,8 @@ class QUIC_EXPORT_PRIVATE QuicStream {
   // Adds random padding after the fin is consumed for this stream.
   void AddRandomPaddingAfterFin();
 
+  QuicConnection* GetConnectionForNextQueuedData() const;
+
  protected:
   // Sends as many bytes in the first |count| buffers of |iov| to the connection
   // as the connection will consume.

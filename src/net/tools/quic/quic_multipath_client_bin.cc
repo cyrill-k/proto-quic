@@ -69,6 +69,8 @@
 #include "net/quic/core/quic_connection_manager.h"
 #include "net/quic/core/congestion_control/multipath_scheduler_algorithm.h"
 #include "net/quic/core/quic_multipath_configuration.h"
+#include "net/quic/platform/api/quic_clock.h"
+#include "net/quic/core/quic_time.h"
 
 using net::CertVerifier;
 using net::CTPolicyEnforcer;
@@ -90,6 +92,8 @@ using net::QuicSubflowId;
 using net::QuicConnectionManager;
 using net::MultipathSchedulerAlgorithm;
 using net::QuicMultipathConfiguration;
+using net::QuicClock;
+using net::QuicTime;
 
 // The IP or hostname the quic client will connect to.
 string FLAGS_host = "";
@@ -116,26 +120,20 @@ bool FLAGS_redirect_is_success = true;
 // Initial MTU of the connection.
 int32_t FLAGS_initial_mtu = 0;
 
-class FakeProofVerifier : public ProofVerifier {
- public:
-  net::QuicAsyncStatus VerifyProof(
-      const string& /*hostname*/,
-      const uint16_t /*port*/,
-      const string& /*server_config*/,
-      net::QuicVersion /*quic_version*/,
-      QuicStringPiece /*chlo_hash*/,
-      const std::vector<string>& /*certs*/,
-      const string& /*cert_sct*/,
-      const string& /*signature*/,
-      const net::ProofVerifyContext* /*context*/,
+class FakeProofVerifier: public ProofVerifier {
+public:
+  net::QuicAsyncStatus VerifyProof(const string& /*hostname*/,
+      const uint16_t /*port*/, const string& /*server_config*/,
+      net::QuicVersion /*quic_version*/, QuicStringPiece /*chlo_hash*/,
+      const std::vector<string>& /*certs*/, const string& /*cert_sct*/,
+      const string& /*signature*/, const net::ProofVerifyContext* /*context*/,
       string* /*error_details*/,
       std::unique_ptr<net::ProofVerifyDetails>* /*details*/,
       std::unique_ptr<net::ProofVerifierCallback> /*callback*/) override {
     return net::QUIC_SUCCESS;
   }
 
-  net::QuicAsyncStatus VerifyCertChain(
-      const std::string& /*hostname*/,
+  net::QuicAsyncStatus VerifyCertChain(const std::string& /*hostname*/,
       const std::vector<std::string>& /*certs*/,
       const net::ProofVerifyContext* /*verify_context*/,
       std::string* /*error_details*/,
@@ -146,8 +144,11 @@ class FakeProofVerifier : public ProofVerifier {
 };
 
 void RequestSite(net::QuicMultipathClient& client,
-    SpdyHeaderBlock& header_block, string body) {
+    SpdyHeaderBlock& header_block, string body, const QuicClock* clock) {
+  QuicTime start = clock->Now();
   client.SendRequestAndWaitForResponse(header_block, body, true);
+  QuicTime end = clock->Now();
+  client.session()->connection_manager()->LogSuccessfulHttpRequest(end - start);
 
   if (!FLAGS_quiet) {
     cout << "Request:" << endl;
@@ -169,9 +170,12 @@ void RequestSite(net::QuicMultipathClient& client,
     cout << "headers: " << client.latest_response_headers() << endl;
     string response_body = client.latest_response_body();
     if (!FLAGS_body_hex.empty()) {
-      cout << "body(" << response_body.size() << "):\n" << (response_body.size() > 2000 ? "" : QuicTextUtils::HexDump(response_body)) << endl;
+      cout << "body(" << response_body.size() << "):\n"
+          << (response_body.size() > 2000 ?
+              "" : QuicTextUtils::HexDump(response_body)) << endl;
     } else {
-      cout << "body(" << response_body.size() << "): " << (response_body.size() > 2000 ? "" : response_body) << endl;
+      cout << "body(" << response_body.size() << "): "
+          << (response_body.size() > 2000 ? "" : response_body) << endl;
     }
     cout << "trailers: " << client.latest_response_trailers() << endl;
   }
@@ -208,29 +212,30 @@ int main(int argc, char* argv[]) {
   if (line->HasSwitch("h") || line->HasSwitch("help") || urls.empty()) {
     const char* help_str =
         "Usage: quic_client [options] <url>\n"
-        "\n"
-        "<url> with scheme must be provided (e.g. http://www.google.com)\n\n"
-        "Options:\n"
-        "-h, --help                  show this help message and exit\n"
-        "--host=<host>               specify the IP address of the hostname to "
-        "connect to\n"
-        "--port=<port>               specify the port to connect to\n"
-        "--body=<body>               specify the body to post\n"
-        "--body_hex=<body_hex>       specify the body_hex to be printed out\n"
-        "--headers=<headers>         specify a semicolon separated list of "
-        "key:value pairs to add to request headers\n"
-        "--quiet                     specify for a quieter output experience\n"
-        "--quic-version=<quic version> specify QUIC version to speak\n"
-        "--version_mismatch_ok       if specified a version mismatch in the "
-        "handshake is not considered a failure\n"
-        "--redirect_is_success       if specified an HTTP response code of 3xx "
-        "is considered to be a successful response, otherwise a failure\n"
-        "--initial_mtu=<initial_mtu> specify the initial MTU of the connection"
-        "\n"
-        "--disable-certificate-verification do not verify certificates\n"
-        "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
-        "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
-        "--client-ports              List of client ports used: port0,port1,...\n";
+            "\n"
+            "<url> with scheme must be provided (e.g. http://www.google.com)\n\n"
+            "Options:\n"
+            "-h, --help                  show this help message and exit\n"
+            "--host=<host>               specify the IP address of the hostname to "
+            "connect to\n"
+            "--port=<port>               specify the port to connect to\n"
+            "--body=<body>               specify the body to post\n"
+            "--body_hex=<body_hex>       specify the body_hex to be printed out\n"
+            "--headers=<headers>         specify a semicolon separated list of "
+            "key:value pairs to add to request headers\n"
+            "--quiet                     specify for a quieter output experience\n"
+            "--quic-version=<quic version> specify QUIC version to speak\n"
+            "--version_mismatch_ok       if specified a version mismatch in the "
+            "handshake is not considered a failure\n"
+            "--redirect_is_success       if specified an HTTP response code of 3xx "
+            "is considered to be a successful response, otherwise a failure\n"
+            "--initial_mtu=<initial_mtu> specify the initial MTU of the connection"
+            "\n"
+            "--disable-certificate-verification do not verify certificates\n"
+            "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
+            "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
+            "--client-ports              List of client ports used: port0,port1,...\n"
+            "--client-ip                 Specifiy the client ip\n";
     cout << help_str;
     exit(0);
   }
@@ -258,7 +263,7 @@ int main(int argc, char* argv[]) {
   if (line->HasSwitch("quic-version")) {
     int quic_version;
     if (base::StringToInt(line->GetSwitchValueASCII("quic-version"),
-                          &quic_version)) {
+        &quic_version)) {
       FLAGS_quic_version = quic_version;
     }
   }
@@ -270,44 +275,59 @@ int main(int argc, char* argv[]) {
   }
   if (line->HasSwitch("initial_mtu")) {
     if (!base::StringToInt(line->GetSwitchValueASCII("initial_mtu"),
-                           &FLAGS_initial_mtu)) {
+        &FLAGS_initial_mtu)) {
       std::cerr << "--initial_mtu must be an integer\n";
       return 1;
     }
   }
-  QuicMultipathConfiguration::AckSending ackHandlingMethod = QuicMultipathConfiguration::DEFAULT_ACK_HANDLING;
+  QuicMultipathConfiguration::AckSending ackHandlingMethod =
+      QuicMultipathConfiguration::DEFAULT_ACK_HANDLING;
   if (line->HasSwitch("ack")) {
-    if(line->GetSwitchValueASCII("ack") == "simple") {
+    if (line->GetSwitchValueASCII("ack") == "simple") {
       ackHandlingMethod = QuicMultipathConfiguration::AckSending::SIMPLE;
-    } else if(line->GetSwitchValueASCII("ack") == "roundrobin") {
+    } else if (line->GetSwitchValueASCII("ack") == "roundrobin") {
       ackHandlingMethod = QuicMultipathConfiguration::AckSending::ROUNDROBIN;
-    } else if(line->GetSwitchValueASCII("ack") == "smallestrtt") {
-      ackHandlingMethod = QuicMultipathConfiguration::AckSending::SEND_ON_SMALLEST_RTT;
+    } else if (line->GetSwitchValueASCII("ack") == "smallestrtt") {
+      ackHandlingMethod =
+          QuicMultipathConfiguration::AckSending::SEND_ON_SMALLEST_RTT;
     }
   }
-  QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod = QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING;
+  QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod =
+      QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING;
   if (line->HasSwitch("pkt")) {
-    if(line->GetSwitchValueASCII("pkt") == "roundrobin") {
-      packetSchedulingMethod = QuicMultipathConfiguration::PacketScheduling::ROUNDROBIN;
-    } else if(line->GetSwitchValueASCII("pkt") == "smallestrtt") {
-      packetSchedulingMethod = QuicMultipathConfiguration::PacketScheduling::SMALLEST_RTT_FIRST;
+    if (line->GetSwitchValueASCII("pkt") == "roundrobin") {
+      packetSchedulingMethod =
+          QuicMultipathConfiguration::PacketScheduling::ROUNDROBIN;
+    } else if (line->GetSwitchValueASCII("pkt") == "smallestrtt") {
+      packetSchedulingMethod =
+          QuicMultipathConfiguration::PacketScheduling::SMALLEST_RTT_FIRST;
     }
   }
   std::vector<unsigned int> clientPorts;
   if (line->HasSwitch("client-ports")) {
     std::stringstream commaPortList(line->GetSwitchValueASCII("client-ports"));
     std::string segment;
-    while(std::getline(commaPortList, segment, ','))
-    {
+    while (std::getline(commaPortList, segment, ',')) {
       unsigned int port = std::atoi(segment.c_str());
       clientPorts.push_back(port);
     }
   }
+  net::QuicIpAddress clientIpAddress;
+  if (line->HasSwitch("client-ip")) {
+    if (!clientIpAddress.FromString(line->GetSwitchValueASCII("client-ip"))) {
+      std::cerr << "Invalid client-ip field";
+      return 1;
+    }
+  }
+  QuicMultipathConfiguration mpConfig =
+      QuicMultipathConfiguration::CreateClientConfiguration(
+          packetSchedulingMethod, ackHandlingMethod, clientPorts,
+          clientIpAddress);
 
-  VLOG(1) << "server host: " << FLAGS_host << " port: " << FLAGS_port
-          << " body: " << FLAGS_body << " headers: " << FLAGS_headers
-          << " quiet: " << FLAGS_quiet
-          << " quic-version: " << FLAGS_quic_version
+  VLOG(1)
+      << "server host: " << FLAGS_host << " port: " << FLAGS_port << " body: "
+          << FLAGS_body << " headers: " << FLAGS_headers << " quiet: "
+          << FLAGS_quiet << " quic-version: " << FLAGS_quic_version
           << " version_mismatch_ok: " << FLAGS_version_mismatch_ok
           << " redirect_is_success: " << FLAGS_redirect_is_success
           << " initial_mtu: " << FLAGS_initial_mtu;
@@ -331,12 +351,13 @@ int main(int argc, char* argv[]) {
     net::AddressList addresses;
     int rv = net::SynchronousHostResolver::Resolve(host, &addresses);
     if (rv != net::OK) {
-      LOG(ERROR) << "Unable to resolve '" << host
-                 << "' : " << net::ErrorToShortString(rv);
+      LOG(ERROR)
+          << "Unable to resolve '" << host << "' : "
+              << net::ErrorToShortString(rv);
       return 1;
     }
-    ip_addr =
-        net::QuicIpAddress(net::QuicIpAddressImpl(addresses[0].address()));
+    ip_addr = net::QuicIpAddress(
+        net::QuicIpAddressImpl(addresses[0].address()));
   }
 
   string host_port = net::QuicStrCat(ip_addr.ToString(), ":", port);
@@ -345,7 +366,7 @@ int main(int argc, char* argv[]) {
   // Build the client, and try to connect.
   net::EpollServer epoll_server;
   net::QuicServerId server_id(url.host(), url.port(),
-                              net::PRIVACY_MODE_DISABLED);
+      net::PRIVACY_MODE_DISABLED);
   net::QuicVersionVector versions = net::AllSupportedVersions();
   if (FLAGS_quic_version != -1) {
     versions.clear();
@@ -362,15 +383,14 @@ int main(int argc, char* argv[]) {
   if (line->HasSwitch("disable-certificate-verification")) {
     proof_verifier.reset(new FakeProofVerifier());
   } else {
-    proof_verifier.reset(new ProofVerifierChromium(
-        cert_verifier.get(), ct_policy_enforcer.get(),
-        transport_security_state.get(), ct_verifier.get()));
+    proof_verifier.reset(
+        new ProofVerifierChromium(cert_verifier.get(), ct_policy_enforcer.get(),
+            transport_security_state.get(), ct_verifier.get()));
   }
-  net::QuicMultipathClient client(net::QuicSocketAddress(ip_addr, port), server_id,
-                         versions, &epoll_server, std::move(proof_verifier));
+  net::QuicMultipathClient client(net::QuicSocketAddress(ip_addr, port),
+      server_id, versions, &epoll_server, std::move(proof_verifier));
   client.set_initial_max_packet_length(
       FLAGS_initial_mtu != 0 ? FLAGS_initial_mtu : net::kDefaultMaxPacketSize);
-  QuicMultipathConfiguration mpConfig(packetSchedulingMethod, ackHandlingMethod, clientPorts);
   if (!client.Initialize(mpConfig)) {
     cerr << "Failed to initialize client." << endl;
     return 1;
@@ -379,12 +399,12 @@ int main(int argc, char* argv[]) {
     net::QuicErrorCode error = client.session()->error();
     if (FLAGS_version_mismatch_ok && error == net::QUIC_INVALID_VERSION) {
       cout << "Server talks QUIC, but none of the versions supported by "
-           << "this client: " << QuicVersionVectorToString(versions) << endl;
+          << "this client: " << QuicVersionVectorToString(versions) << endl;
       // Version mismatch is not deemed a failure.
       return 0;
     }
-    cerr << "Failed to connect to " << host_port
-         << ". Error: " << net::QuicErrorCodeToString(error) << endl;
+    cerr << "Failed to connect to " << host_port << ". Error: "
+        << net::QuicErrorCodeToString(error) << endl;
     return 1;
   }
   cout << "Connected to " << host_port << endl;
@@ -421,13 +441,14 @@ int main(int argc, char* argv[]) {
   // Make sure to store the response, for later output.
   client.set_store_response(true);
 
-
   cout << "++++++++++ Adding new subflow:" << endl;
   client.AddSubflow();
   //client.AddSubflow();
   //client.UseSubflowId(3);
-  for(int i = 0; i < 10; ++i) {
-    RequestSite(client, header_block, body);
+
+  for (int i = 0; i < 10; ++i) {
+    RequestSite(client, header_block, body,
+        client.session()->connection_manager()->AnyConnection()->clock());
   }
 
   return Response(client);

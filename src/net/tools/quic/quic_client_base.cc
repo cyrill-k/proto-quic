@@ -85,6 +85,7 @@ void QuicClientBase::OnClose(QuicSpdyStream* stream) {
 
 bool QuicClientBase::Initialize(const QuicMultipathConfiguration& mpConfiguration) {
   multipath_configuration_ = mpConfiguration;
+  set_bind_to_address(mpConfiguration.GetClientIpAddress());
   num_sent_client_hellos_ = 0;
   num_stateless_rejects_received_ = 0;
   connection_error_ = QUIC_NO_ERROR;

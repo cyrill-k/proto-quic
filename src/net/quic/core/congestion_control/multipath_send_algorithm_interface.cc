@@ -201,10 +201,8 @@ bool MultipathSendAlgorithmInterface::HasForwardSecureSubflow() {
 }
 bool MultipathSendAlgorithmInterface::FitsCongestionWindow(
     const QuicSubflowDescriptor& descriptor, QuicPacketLength length) {
-  //TODO(cyrill) remove true
-  return true
-      || parameters_[descriptor].bytes_in_flight + length
-          <= parameters_[descriptor].congestion_window;
+  return parameters_[descriptor].bytes_in_flight
+          < parameters_[descriptor].congestion_window;
 }
 bool MultipathSendAlgorithmInterface::IsForwardSecure(
     const QuicSubflowDescriptor& descriptor) {

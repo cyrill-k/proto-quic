@@ -20,7 +20,8 @@ class QuicSimpleDispatcher : public QuicDispatcher {
       std::unique_ptr<QuicConnectionHelperInterface> helper,
       std::unique_ptr<QuicCryptoServerStream::Helper> session_helper,
       std::unique_ptr<QuicAlarmFactory> alarm_factory,
-      QuicHttpResponseCache* response_cache);
+      QuicHttpResponseCache* response_cache,
+      const QuicMultipathConfiguration& multipathConfiguration);
 
   ~QuicSimpleDispatcher() override;
 
@@ -41,6 +42,8 @@ class QuicSimpleDispatcher : public QuicDispatcher {
 
   // The map of the reset error code with its counter.
   std::map<QuicRstStreamErrorCode, int> rst_error_map_;
+
+  QuicMultipathConfiguration multipath_configuration_;
 };
 
 }  // namespace net

@@ -51,6 +51,11 @@ void QuicConnectionManager::set_congestion_method(
   ack_sending_ = ackSending;
 }
 
+void QuicConnectionManager::LogSuccessfulHttpRequest(
+    QuicTime::Delta requestDelta) {
+  logger_->OnSuccessfulHttpRequest(requestDelta);
+}
+
 void QuicConnectionManager::CloseConnection(QuicErrorCode error,
     const std::string& details,
     ConnectionCloseBehavior connection_close_behavior) {
@@ -116,6 +121,23 @@ QuicConsumedData QuicConnectionManager::SendStreamData(QuicStreamId id,
   p("Using subflow", descriptor);
   return GetConnection(descriptor)->SendStreamData(id, iov, offset, state,
       ack_listener);
+}
+
+QuicConnection* QuicConnectionManager::GetConnectionForNextStreamFrame(
+    QuicStreamId id, QuicConnection* connection) {
+  QuicSubflowDescriptor hint =
+      connection != nullptr ?
+          connection->SubflowDescriptor() : QuicSubflowDescriptor();
+  MultipathSendAlgorithmInterface::SendReason reason =
+      MultipathSendAlgorithmInterface::SendReason::ENCRYPTED_TRANSMISSION;
+  if (connection != nullptr
+      && connection->encryption_level() == ENCRYPTION_NONE) {
+    reason =
+        MultipathSendAlgorithmInterface::SendReason::UNENCRYPTED_TRANSMISSION;
+  }
+  const QuicSubflowDescriptor& descriptor =
+      GetSendAlgorithm()->GetNextStreamFrameSubflow(id, 0, hint, reason);
+  return GetConnection(descriptor);
 }
 
 void QuicConnectionManager::SendRstStream(QuicStreamId id,

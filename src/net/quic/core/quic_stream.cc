@@ -495,4 +495,8 @@ void QuicStream::AddRandomPaddingAfterFin() {
   add_random_padding_after_fin_ = true;
 }
 
+QuicConnection* QuicStream::GetConnectionForNextQueuedData() const {
+  return queued_data_.front().connection;
+}
+
 }  // namespace net

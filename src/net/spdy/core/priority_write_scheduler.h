@@ -159,6 +159,18 @@ class PriorityWriteScheduler : public WriteScheduler<StreamIdType> {
     return std::get<0>(PopNextReadyStreamAndPrecedence());
   }
 
+  StreamIdType GetNextReadyStream() {
+    for (SpdyPriority p = kV3HighestPriority; p <= kV3LowestPriority; ++p) {
+      ReadyList& ready_list = priority_infos_[p].ready_list;
+      if (!ready_list.empty()) {
+        StreamInfo* info = ready_list.front();
+        return info->stream_id;
+      }
+    }
+    DCHECK(false) << "Next ready stream was not found";
+    return 0;
+  }
+
   // Returns the next ready stream and its precedence.
   std::tuple<StreamIdType, StreamPrecedenceType>
   PopNextReadyStreamAndPrecedence() override {

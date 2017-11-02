@@ -97,6 +97,20 @@ class QUIC_EXPORT_PRIVATE QuicWriteBlockedList {
     return id;
   }
 
+  QuicStreamId Front() {
+    if (crypto_stream_blocked_) {
+      crypto_stream_blocked_ = false;
+      return kCryptoStreamId;
+    }
+
+    if (headers_stream_blocked_) {
+      headers_stream_blocked_ = false;
+      return kHeadersStreamId;
+    }
+
+    return priority_write_scheduler_.GetNextReadyStream();
+  }
+
   void RegisterStream(QuicStreamId stream_id, SpdyPriority priority) {
     priority_write_scheduler_.RegisterStream(stream_id,
                                              SpdyStreamPrecedence(priority));

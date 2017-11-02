@@ -172,6 +172,8 @@ override  ;
     QUIC_LOG(INFO) << s;
   }
 
+  void LogSuccessfulHttpRequest(QuicTime::Delta requestDelta);
+
   // QUIC connection control
   void CloseConnection(
       QuicErrorCode error,
@@ -186,6 +188,7 @@ override  ;
       StreamSendingState state,
       QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener,
       QuicConnection* connection);
+  QuicConnection* GetConnectionForNextStreamFrame(QuicStreamId id, QuicConnection* connection);
   virtual void SendRstStream(QuicStreamId id,
       QuicRstStreamErrorCode error,
       QuicStreamOffset bytes_written);

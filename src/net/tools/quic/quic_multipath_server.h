@@ -23,6 +23,7 @@
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_default_packet_writer.h"
 #include "net/tools/quic/quic_http_response_cache.h"
+#include "net/quic/core/quic_multipath_configuration.h"
 
 namespace net {
 
@@ -41,7 +42,8 @@ class QuicMultipathServer : public EpollCallbackInterface {
              const QuicConfig& config,
              const QuicCryptoServerConfig::ConfigOptions& server_config_options,
              const QuicVersionVector& supported_versions,
-             QuicHttpResponseCache* response_cache);
+             QuicHttpResponseCache* response_cache,
+             const QuicMultipathConfiguration& multipathConfiguration);
 
   ~QuicMultipathServer() override;
 
@@ -138,6 +140,8 @@ class QuicMultipathServer : public EpollCallbackInterface {
 
   // Stores a packet writer for each fd
   std::map<int, QuicDefaultPacketWriter*> fd_to_writer_map_;
+
+  QuicMultipathConfiguration multipath_configuration_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicMultipathServer);
 };
