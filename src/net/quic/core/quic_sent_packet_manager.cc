@@ -455,6 +455,19 @@ void QuicSentPacketManager::InformLossAlgorithm(const QuicTransmissionInfo& info
   }
 }
 
+void QuicSentPacketManager::ClearUnnecessaryPendingRetransmissions() {
+  for(auto it = pending_retransmissions_.begin(); it != pending_retransmissions_.end();) {
+    QuicTransmissionInfo* ti =
+      retransmission_visitor_->GetTransmissionInfo(it->first);
+    if(ti == nullptr || ti->retransmittable_frames.empty()) {
+      it = pending_retransmissions_.erase(it);
+    }
+    else {
+      ++it;
+    }
+  }
+}
+
 bool QuicSentPacketManager::HasPendingRetransmissions() const {
   return !pending_retransmissions_.empty();
 }

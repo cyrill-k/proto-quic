@@ -235,7 +235,8 @@ int main(int argc, char* argv[]) {
             "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
             "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
             "--client-ports              List of client ports used: port0,port1,...\n"
-            "--client-ip                 Specifiy the client ip\n";
+            "--client-ip                 Specifiy the client ip\n"
+            "--repetitions               The number of identical sequential http requests.\n";
     cout << help_str;
     exit(0);
   }
@@ -316,6 +317,13 @@ int main(int argc, char* argv[]) {
   if (line->HasSwitch("client-ip")) {
     if (!clientIpAddress.FromString(line->GetSwitchValueASCII("client-ip"))) {
       std::cerr << "Invalid client-ip field";
+      return 1;
+    }
+  }
+  int nRepetitions = 1;
+  if (line->HasSwitch("repetitions")) {
+    if (!base::StringToInt(line->GetSwitchValueASCII("repetitions"), &nRepetitions)) {
+      std::cerr << "--repetitions must be an integer\n";
       return 1;
     }
   }
@@ -446,7 +454,7 @@ int main(int argc, char* argv[]) {
   //client.AddSubflow();
   //client.UseSubflowId(3);
 
-  for (int i = 0; i < 10; ++i) {
+  for (int i = 0; i < nRepetitions; ++i) {
     RequestSite(client, header_block, body,
         client.session()->connection_manager()->AnyConnection()->clock());
   }

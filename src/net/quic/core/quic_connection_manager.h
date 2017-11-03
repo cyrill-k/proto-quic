@@ -270,6 +270,10 @@ private:
     QUIC_LOG(INFO) << prefix << ": " << s;
   }
 
+  // Returns a descriptor pointing to the newest retransmission for this packet.
+  // The packet described by |packetDescriptor| must still exist in the unacked packet map.
+  // If a retransmission was already removed by another subflow, an uninitialized
+  // descriptor is returned.
   QuicPacketDescriptor GetNewestRetransmissionPacketDescriptor(const QuicPacketDescriptor& packetDescriptor);
   QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor);
   void RecordSpuriousRetransmissionStats(const QuicPacketDescriptor& packetDescriptor);

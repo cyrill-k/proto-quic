@@ -78,6 +78,7 @@ private:
   void LogStatistic(std::string prefix, Statistic s, QuicTime::Delta);
   void LogIntervalStatistic(QuicTime now);
   void LogFullStatistic(QuicTime now);
+  void Log(std::string s);
 
   const std::string EVENT_PACKET_SENT = "PACKET_SENT";
   const std::string EVENT_PACKET_RECEIVED = "PACKET_RECEIVED";

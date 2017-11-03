@@ -1643,6 +1643,9 @@ void QuicConnection::WriteQueuedPackets() {
 }
 
 void QuicConnection::WritePendingRetransmissions() {
+  // Remove pending retransmissions that should not be sent.
+  sent_packet_manager_.ClearUnnecessaryPendingRetransmissions();
+
   // Keep writing as long as there's a pending retransmission which can be
   // written.
   while (sent_packet_manager_.HasPendingRetransmissions()) {

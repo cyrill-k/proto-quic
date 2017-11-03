@@ -725,6 +725,10 @@ void QuicConnectionManager::RemoveRetransmittability(QuicConnection* connection,
     descriptor = info->retransmission;
     info->retransmission = QuicPacketDescriptor();
     info = GetTransmissionInfo(descriptor);
+    if(info == nullptr) {
+      // We cannot find the last retransmission, so we cannot remove the retransmittable frames.
+      return;
+    }
     currentConnection = GetConnection(descriptor.SubflowDescriptor());
   }
 
@@ -756,31 +760,34 @@ void QuicConnectionManager::MarkNewestRetransmissionHandled(
 
   QuicPacketDescriptor new_d = GetNewestRetransmissionPacketDescriptor(
       packetDescriptor);
-  QuicConnection* new_c = GetConnection(new_d.SubflowDescriptor());
-  QuicTransmissionInfo* new_t = GetTransmissionInfo(new_d);
-  QuicSentPacketManager* new_pm = new_c->GetSentPacketManager();
+  // Newest retransmission was already removed from subflow
+  if(new_d.IsInitialized()) {
+    QuicConnection* new_c = GetConnection(new_d.SubflowDescriptor());
+    QuicTransmissionInfo* new_t = GetTransmissionInfo(new_d);
+    QuicSentPacketManager* new_pm = new_c->GetSentPacketManager();
 
-  // Remove the most recent packet, if it is pending retransmission.
-  TryRemovingPendingRetransmission(new_d);
+    // Remove the most recent packet, if it is pending retransmission.
+    TryRemovingPendingRetransmission(new_d);
 
-  // The AckListener needs to be notified about the most recent
-  // transmission, since that's the one only one it tracks.
-  for (const AckListenerWrapper& wrapper : new_t->ack_listeners) {
-    wrapper.ack_listener->OnPacketAcked(wrapper.length, ack_delay_time);
-  }
-  new_t->ack_listeners.clear();
+    // The AckListener needs to be notified about the most recent
+    // transmission, since that's the one only one it tracks.
+    for (const AckListenerWrapper& wrapper : new_t->ack_listeners) {
+      wrapper.ack_listener->OnPacketAcked(wrapper.length, ack_delay_time);
+    }
+    new_t->ack_listeners.clear();
 
-  if (packetDescriptor != new_d) {
-    RecordSpuriousRetransmissionStats(packetDescriptor);
+    if (packetDescriptor != new_d) {
+      RecordSpuriousRetransmissionStats(packetDescriptor);
 
-    if (new_t->has_crypto_handshake) {
-      // Remove the most recent packet from flight if it's a crypto handshake
-      // packet, since they won't be acked now that one has been processed.
-      // Other crypto handshake packets won't be in flight, only the newest
-      // transmission of a crypto packet is in flight at once.
-      // TODO(ianswett): Instead of handling all crypto packets special,
-      // only handle nullptr encrypted packets in a special way.
-      new_pm->GetUnackedPacketMap()->RemoveFromInFlight(new_t);
+      if (new_t->has_crypto_handshake) {
+        // Remove the most recent packet from flight if it's a crypto handshake
+        // packet, since they won't be acked now that one has been processed.
+        // Other crypto handshake packets won't be in flight, only the newest
+        // transmission of a crypto packet is in flight at once.
+        // TODO(ianswett): Instead of handling all crypto packets special,
+        // only handle nullptr encrypted packets in a special way.
+        new_pm->GetUnackedPacketMap()->RemoveFromInFlight(new_t);
+      }
     }
   }
 }
@@ -803,9 +810,13 @@ QuicPacketDescriptor QuicConnectionManager::GetNewestRetransmissionPacketDescrip
   DCHECK(packetDescriptor.IsInitialized());
   QuicPacketDescriptor descriptor = packetDescriptor;
   QuicTransmissionInfo* info = GetTransmissionInfo(packetDescriptor);
+  DCHECK(info != nullptr) << "Cannot get the newest retransmission of a nonexistent packet";
   while (info->retransmission.IsInitialized()) {
     descriptor = info->retransmission;
     info = GetTransmissionInfo(descriptor);
+    if(info == nullptr) {
+      return QuicPacketDescriptor();
+    }
   }
   return descriptor;
 }

@@ -195,6 +195,10 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   // they don't get retransmitted.
   void NeuterUnencryptedPackets();
 
+  // Removes pending retransmissions that are no longer needed since the
+  // packet that should be retransmitted was received.
+  void ClearUnnecessaryPendingRetransmissions();
+
   // Returns true if there are pending retransmissions.
   // Not const because retransmissions may be cancelled before returning.
   bool HasPendingRetransmissions() const;

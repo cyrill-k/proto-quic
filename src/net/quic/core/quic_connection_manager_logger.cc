@@ -189,7 +189,7 @@ void QuicConnectionManagerLogger::OnSuccessfulHttpRequest(QuicTime::Delta reques
 void QuicConnectionManagerLogger::RecordEvent(std::string eventType,
     QuicSubflowId id, std::string content) {
 
-  QUIC_LOG(INFO) << id << " " << eventType << ": " << content;
+  Log("" + std::to_string(id) + " " + eventType + ": " + content);
 
   QuicTime now = clock_->Now();
   // Initialize the log interval times
@@ -228,22 +228,23 @@ void QuicConnectionManagerLogger::LogStatistic(std::string prefix, Statistic s,
   uint64_t str_rcv_bps = s.nStreamBytesReceived
       / ((double) delta.ToMicroseconds() / 1000000);
 
-  QUIC_LOG(INFO)
-      << prefix << "mu=" << delta.ToMicroseconds() << " sent["
-          << std::to_string(s.nPacketsSent) << "/" << s.nBytesSent << "]="
-          << std::to_string(sent_bps) << " received["
-          << std::to_string(s.nPacketsReceived) << "] lost["
-          << std::to_string(s.nPacketsLost) << "/" << s.nBytesLost << "]="
-          << std::to_string(lost_bps) << " acksent["
-          << std::to_string(s.nAcksSent) << "/" << s.nAckBytesSent << "]="
-          << std::to_string(ack_sent_bps) << " ackrcv["
-          << std::to_string(s.nPacketsAcked) << "/" << s.nBytesAcked << "]="
-          << std::to_string(ack_rcv_bps) << "," << std::to_string(ack_del_bps)
-          << "," << std::to_string(ack_rtt_bps) << " str_sent["
-          << std::to_string(s.nStreamFramesSent) << "/" << s.nStreamBytesSent
-          << "]=" << std::to_string(str_sent_bps) << " str_received["
-          << std::to_string(s.nStreamFramesReceived) << "/"
-          << s.nStreamBytesReceived << "]=" << std::to_string(str_rcv_bps);
+  Log(
+      prefix + "mu=" + std::to_string(delta.ToMicroseconds()) + " sent["
+          + std::to_string(s.nPacketsSent) + "/" + std::to_string(s.nBytesSent) + "]="
+          + std::to_string(sent_bps) + " received["
+          + std::to_string(s.nPacketsReceived) + "] lost["
+          + std::to_string(s.nPacketsLost) + "/" + std::to_string(s.nBytesLost) + "]="
+          + std::to_string(lost_bps) + " acksent["
+          + std::to_string(s.nAcksSent) + "/" + std::to_string(s.nAckBytesSent) + "]="
+          + std::to_string(ack_sent_bps) + " ackrcv["
+          + std::to_string(s.nPacketsAcked) + "/" + std::to_string(s.nBytesAcked) + "]="
+          + std::to_string(ack_rcv_bps) + "," + std::to_string(ack_del_bps)
+          + "," + std::to_string(ack_rtt_bps) + " str_sent["
+          + std::to_string(s.nStreamFramesSent) + "/" + std::to_string(s.nStreamBytesSent)
+          + "]=" + std::to_string(str_sent_bps) + " str_received["
+          + std::to_string(s.nStreamFramesReceived) + "/"
+          + std::to_string(s.nStreamBytesReceived) + "]=" + std::to_string(str_rcv_bps)
+  );
 }
 
 void QuicConnectionManagerLogger::LogIntervalStatistic(QuicTime t) {
@@ -258,6 +259,10 @@ void QuicConnectionManagerLogger::LogFullStatistic(QuicTime t) {
     LogStatistic(std::to_string(p.first) + " (full): ", p.second,
         t - start_time_);
   }
+}
+
+void QuicConnectionManagerLogger::Log(std::string s) {
+  QUIC_LOG(WARNING) << s;
 }
 
 QuicConnectionManagerLogger::Statistic::Statistic()
