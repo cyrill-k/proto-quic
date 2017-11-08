@@ -19,9 +19,10 @@ MultipathSendAlgorithmInterface::~MultipathSendAlgorithmInterface() {
 }
 
 void MultipathSendAlgorithmInterface::AddSubflow(
-    const QuicSubflowDescriptor& subflowDescriptor, RttStats* rttStats) {
+    const QuicSubflowDescriptor& subflowDescriptor, RttStats* rttStats,
+    QuicUnackedPacketMap* unackedPacketMap) {
   scheduler_->AddSubflow(subflowDescriptor, rttStats);
-  SubflowParameters sp(rttStats);
+  SubflowParameters sp(rttStats, unackedPacketMap);
   parameters_[subflowDescriptor] = sp;
 }
 
@@ -43,11 +44,14 @@ QuicTime::Delta MultipathSendAlgorithmInterface::TimeUntilSend(
     const QuicSubflowDescriptor& descriptor, QuicTime now,
     QuicByteCount bytes_in_flight) {
   if (bytes_in_flight < parameters_[descriptor].congestion_window) {
+    QUIC_LOG(INFO)
+        << bytes_in_flight << " < "
+            << parameters_[descriptor].congestion_window << " -> Send " << descriptor.ToString();
     return QuicTime::Delta::Zero();
   } else {
     QUIC_LOG(INFO)
         << bytes_in_flight << " >= "
-            << parameters_[descriptor].congestion_window;
+            << parameters_[descriptor].congestion_window << " -> Dont Send " << descriptor.ToString();
     return QuicTime::Delta::Infinite();
   }
 }
@@ -60,8 +64,12 @@ QuicBandwidth MultipathSendAlgorithmInterface::PacingRate(
 
 QuicBandwidth MultipathSendAlgorithmInterface::BandwidthEstimate(
     const QuicSubflowDescriptor& descriptor) const {
-  //TODO(cyrill)
-  return QuicBandwidth::FromBytesPerSecond(0);
+  QuicTime::Delta srtt = GetParameters(descriptor).rtt_stats->smoothed_rtt();
+  if (srtt.IsZero()) {
+    // If we haven't measured an rtt, the bandwidth estimate is unknown.
+    return QuicBandwidth::Zero();
+  }
+  return QuicBandwidth::FromBytesAndTimeDelta(GetParameters(descriptor).congestion_window, srtt);
 }
 
 QuicByteCount MultipathSendAlgorithmInterface::GetCongestionWindow(
@@ -187,21 +195,14 @@ EncryptionLevel MultipathSendAlgorithmInterface::GetEncryptionLevel(
   return parameters_[descriptor].encryption_level;
 }
 
-bool MultipathSendAlgorithmInterface::CanSendOnSubflow(
-    const QuicSubflowDescriptor& descriptor, QuicPacketLength length,
-    bool needsForwardSecureEncryption) {
-  return parameters_[descriptor].bytes_in_flight + length
-      <= parameters_[descriptor].congestion_window
-      && (!needsForwardSecureEncryption
-          || parameters_[descriptor].forward_secure_encryption_established);
-}
 bool MultipathSendAlgorithmInterface::HasForwardSecureSubflow() {
   return std::any_of(parameters_.begin(), parameters_.end(),
       [](std::pair<const QuicSubflowDescriptor, SubflowParameters> p) {return p.second.encryption_level == ENCRYPTION_FORWARD_SECURE;});
 }
 bool MultipathSendAlgorithmInterface::FitsCongestionWindow(
     const QuicSubflowDescriptor& descriptor, QuicPacketLength length) {
-  return parameters_[descriptor].bytes_in_flight
+  QUIC_LOG(INFO) << "param[].in_flight = " << parameters_[descriptor].unacked_packet_map->bytes_in_flight() << " < param[].congestion_window = " << parameters_[descriptor].congestion_window;
+  return parameters_[descriptor].unacked_packet_map->bytes_in_flight()
           < parameters_[descriptor].congestion_window;
 }
 bool MultipathSendAlgorithmInterface::IsForwardSecure(
@@ -248,15 +249,19 @@ QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextSubflow(
   }
 
   if (fwFitting.IsInitialized()) {
+    QUIC_LOG(INFO) << "choosing fw fitting: " << fwFitting.ToString();
     return fwFitting;
   }
   if (allowInitialEncryption && initialFitting.IsInitialized()) {
+    QUIC_LOG(INFO) << "choosing initial fitting: " << initialFitting.ToString();
     return initialFitting;
   }
   if (fw.IsInitialized()) {
+    QUIC_LOG(INFO) << "choosing fw NON fitting: " << fw.ToString();
     return fw;
   }
   if (allowInitialEncryption && initial.IsInitialized()) {
+    QUIC_LOG(INFO) << "choosing init NON fitting: " << initial.ToString();
     return initialFitting;
   }
   // should never reach here
@@ -264,17 +269,6 @@ QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextSubflow(
   return QuicSubflowDescriptor();
 }
 
-QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextPossibleSubflow(
-    QuicPacketLength length) {
-  std::list<QuicSubflowDescriptor> subflowPriority =
-      scheduler_->GetSubflowPriority();
-  for (const QuicSubflowDescriptor& descriptor : subflowPriority) {
-    if (CanSendOnSubflow(descriptor, length, true)) {
-      return descriptor;
-    }
-  }
-  return uninitialized_subflow_descriptor_;
-}
 QuicSubflowDescriptor MultipathSendAlgorithmInterface::GetNextForwardSecureSubflow() {
   std::list<QuicSubflowDescriptor> subflowPriority =
       scheduler_->GetSubflowPriority();

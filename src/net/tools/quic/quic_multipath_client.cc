@@ -309,7 +309,7 @@ void QuicMultipathClient::OnEvent(int fd, EpollEvent* event) {
     }
   }
   if (connected() && (event->in_events & EPOLLOUT)) {
-    QUIC_LOG(INFO) << "EPOLLOUT";
+    QUIC_LOG(INFO) << "EPOLLOUT " << fd_to_subflow_map_[fd].ToString();
     fd_to_writer_map_[fd]->SetWritable();
     session()->OnCanWrite(session()->connection_manager()->GetConnection(fd_to_subflow_map_[fd]));
     //session()->OnCanWrite(fd_to_subflow_map_[fd]);

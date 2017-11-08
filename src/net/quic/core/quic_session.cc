@@ -154,6 +154,14 @@ void QuicSession::StartCryptoConnect(QuicConnection* connection) {
   GetMutableCryptoStream()->CryptoConnect(connection);
 }
 
+QuicConnection* QuicSession::GetConnectionForNextStreamFrame() {
+  QuicStreamId nextStreamId = write_blocked_streams_.Front();
+  QuicStream* nextWriteBlockedStream = GetOrCreateStream(nextStreamId);
+  QuicConnection* nextStreamSubflow = connection_manager()->GetConnectionForNextStreamFrame(
+      nextStreamId, nextWriteBlockedStream->GetConnectionForNextQueuedData());
+  return nextStreamSubflow;
+}
+
 void QuicSession::OnWindowUpdateFrame(const QuicWindowUpdateFrame& frame) {
   // Stream may be closed by the time we receive a WINDOW_UPDATE, so we can't
   // assume that it still exists.
@@ -232,9 +240,11 @@ void QuicSession::OnCanWrite(QuicConnection *connection) {
     }
   }
   if (num_writes == 0) {
+    QUIC_LOG(INFO) << "No streams are write blocked";
     return;
   }
 
+  QUIC_LOG(INFO) << "START LOOP";
   QuicConnection::ScopedPacketBundler ack_bundler(
       connection, QuicConnection::SEND_ACK_IF_QUEUED);
   for (size_t i = 0; i < num_writes; ++i) {
@@ -248,13 +258,13 @@ void QuicSession::OnCanWrite(QuicConnection *connection) {
       return;
     }
     // TODO(cyrill): return if stream->OnCanWrite() does not provide a subflow to write because of congestion
-    QuicStreamId nextStreamId = write_blocked_streams_.Front();
-    QuicStream* nextWriteBlockedStream = GetOrCreateStream(nextStreamId);
-    QuicConnection* nextStreamSubflow = connection_manager()->GetConnectionForNextStreamFrame(
-        nextStreamId, nextWriteBlockedStream->GetConnectionForNextQueuedData());
+    // break if connection != nextStreamSubflow  ??
+    QuicConnection* nextStreamSubflow = GetConnectionForNextStreamFrame();
     if (!nextStreamSubflow->CanWriteStreamData()) {
+      QUIC_LOG(INFO) << "CANNOT WRITE STREAM DATAT2";
       return;
     }
+    QUIC_LOG(INFO) << "CAN WRITE STREAM DATAT2";
     currently_writing_stream_id_ = write_blocked_streams_.PopFront();
     QuicStream* stream = GetOrCreateStream(currently_writing_stream_id_);
     if (stream != nullptr && !stream->flow_controller()->IsBlocked()) {
@@ -265,6 +275,13 @@ void QuicSession::OnCanWrite(QuicConnection *connection) {
       QUIC_DVLOG(1) << "stream " << stream->id() << " bytes_written "
                     << previous_bytes_written << " fin " << previous_fin_sent;
       stream->OnCanWrite();
+      if(previous_bytes_written == stream->stream_bytes_written() && previous_fin_sent == stream->fin_sent()) {
+        QUIC_LOG(INFO) << "ACTUALLY WROTE DATA";
+
+      }
+      else {
+        QUIC_LOG(INFO) << "DID NOT WRITE";
+      }
       DCHECK(CheckStreamNotBusyLooping(stream, previous_bytes_written,
                                        previous_fin_sent));
     }

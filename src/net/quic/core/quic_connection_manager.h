@@ -100,6 +100,8 @@ public:
 
   // Called to start sending crypto handshakes on this connection.
   virtual void StartCryptoConnect(QuicConnection* connection) = 0;
+
+  virtual QuicConnection* GetConnectionForNextStreamFrame() = 0;
 };
 
 class QUIC_EXPORT_PRIVATE QuicConnectionManager: public QuicConnectionVisitorInterface,
@@ -249,6 +251,8 @@ override  ;
   bool IsPendingRetransmission(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) override;
   QuicFrames GetUpdatedAckFrames(QuicConnection* connection) override;
   void OnAckFrameUpdated(QuicConnection* connection) override;
+  QuicConnection* GetConnectionForNextStreamFrame() override;
+  void SetResumeWritesAlarm() override;
 
 private:
 
@@ -327,6 +331,23 @@ private:
     return multipath_send_algorithm_.get();
   }
 
+  void ResumeWritesAlarmFired();
+
+
+  // An alarm that is scheduled when the SentPacketManager requires a delay
+  // before sending packets and fires when the packet may be sent.
+  class ResumeWritesAlarmDelegate : public QuicAlarm::Delegate {
+   public:
+    ResumeWritesAlarmDelegate(QuicConnectionManager* connectionManager);
+
+    void OnAlarm() override;
+
+   private:
+    QuicConnectionManager* connection_manager_;
+
+    DISALLOW_COPY_AND_ASSIGN(ResumeWritesAlarmDelegate);
+  };
+
   QuicConnectionManagerVisitorInterface *visitor_;
 
   // Whether a GoAway has been sent.
@@ -360,6 +381,8 @@ private:
   std::unique_ptr<MultipathSendAlgorithmInterface> multipath_send_algorithm_;
 
   std::unique_ptr<QuicConnectionManagerLogger> logger_;
+
+  std::unique_ptr<QuicAlarm> resume_writes_alarm_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionManager);
 };

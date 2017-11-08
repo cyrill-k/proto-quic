@@ -471,6 +471,7 @@ void QuicDispatcher::OnCanWrite() {
     QuicBlockedWriterInterface* blocked_writer =
         write_blocked_list_.begin()->first;
     write_blocked_list_.erase(write_blocked_list_.begin());
+    QUIC_LOG(INFO) << ((QuicConnection*)blocked_writer)->SubflowDescriptor().ToString();
     blocked_writer->OnCanWrite();
   }
 }

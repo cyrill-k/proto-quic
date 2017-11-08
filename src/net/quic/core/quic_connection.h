@@ -204,6 +204,10 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
   virtual QuicFrames GetUpdatedAckFrames(QuicConnection* connection) = 0;
 
   virtual void OnAckFrameUpdated(QuicConnection* connection) = 0;
+
+  virtual QuicConnection* GetConnectionForNextStreamFrame() = 0;
+
+  virtual void SetResumeWritesAlarm() = 0;
 };
 
 // Class that receives callbacks from the connection whenever events happen that should
@@ -580,6 +584,10 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   // Called when the underlying connection becomes writable to allow queued
   // writes to happen.
   void OnCanWrite() override;
+
+  bool ShouldSendOnThisSubflow();
+
+  void MaybeSetResumeWritesAlarmOnThisSubflow();
 
   // Called when an error occurs while attempting to write a packet to the
   // network.
@@ -1346,6 +1354,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
 
   // Sends events to the connection manager class that should be logged (not owned).
   QuicConnectionLoggingInterface* logging_interface_;
+
+  unsigned int logging_packet_counter_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnection);
 };

@@ -27,7 +27,6 @@ bool MtcpSendAlgorithm::OnPacketSent(const QuicSubflowDescriptor& descriptor,
     QuicTime sent_time, QuicByteCount bytes_in_flight,
     QuicPacketNumber packet_number, QuicByteCount bytes,
     HasRetransmittableData is_retransmittable) {
-  parameters_[descriptor].bytes_in_flight = bytes_in_flight+bytes;
   return true;
 }
 

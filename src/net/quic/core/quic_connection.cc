@@ -278,7 +278,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
       last_sent_unencrypted_packet_number_(std::numeric_limits<QuicPacketNumber>::max()),
       largest_observed_last_delay_(QuicTime::Delta::Zero()),
       largest_rtt_measurement_packet_number_(0),
-      logging_interface_(nullptr) {
+      logging_interface_(nullptr),
+      logging_packet_counter_(0) {
   QUIC_DLOG(INFO) << ENDPOINT
                   << "Created connection with connection_id: " << connection_id;
   framer_->set_visitor(this);
@@ -1443,6 +1444,10 @@ void QuicConnection::ProcessUdpPacket(const QuicSocketAddress& self_address,
   stats_.bytes_received += packet.length();
   ++stats_.packets_received;
 
+
+  if(logging_packet_counter_++ % 100 == 0) {
+    QUIC_LOG(WARNING) << SubflowDescriptor().ToString() << " [" << logging_packet_counter_ << "]: now - time pkt = " << std::abs((packet.receipt_time() - clock_->ApproximateNow()).ToMicroseconds());
+  }
   // Ensure the time coming from the packet reader is within a minute of now.
   if (std::abs((packet.receipt_time() - clock_->ApproximateNow()).ToSeconds()) >
       60) {
@@ -1506,7 +1511,7 @@ void QuicConnection::OnCanWrite() {
   if (!CanWrite(HAS_RETRANSMITTABLE_DATA)) {
     return;
   }
-
+  QUIC_LOG(INFO) << "TEST";
   {
     ScopedPacketBundler bundler(this, SEND_ACK_IF_QUEUED);
     visitor_->OnCanWrite(this);
@@ -1515,13 +1520,24 @@ void QuicConnection::OnCanWrite() {
 
   // After the visitor writes, it may have caused the socket to become write
   // blocked or the congestion manager to prohibit sending, so check again.
-  if (visitor_->WillingAndAbleToWrite(this) && !resume_writes_alarm_->IsSet() &&
+  if(visitor_->WillingAndAbleToWrite(this)) {
+    visitor_->SetResumeWritesAlarm();
+  }
+}
+
+void QuicConnection::MaybeSetResumeWritesAlarmOnThisSubflow() {
+  if(!resume_writes_alarm_->IsSet() &&
       CanWrite(HAS_RETRANSMITTABLE_DATA)) {
+    QUIC_LOG(INFO) <<  "CanWrite after connection manager event -> set connection::resume_writes_alarm";
     // We're not write blocked, but some stream didn't write out all of its
     // bytes. Register for 'immediate' resumption so we'll keep writing after
     // other connections and events have had a chance to use the thread.
     resume_writes_alarm_->Set(clock_->ApproximateNow());
   }
+}
+
+bool QuicConnection::ShouldSendOnThisSubflow() {
+  return this == visitor_->GetConnectionForNextStreamFrame();
 }
 
 void QuicConnection::WriteIfNotBlocked() {

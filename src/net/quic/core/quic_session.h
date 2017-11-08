@@ -108,6 +108,7 @@ class QUIC_EXPORT_PRIVATE QuicSession : public QuicConnectionManagerVisitorInter
   bool HasOpenDynamicStreams() const override;
   void OnPathDegrading() override;
   void StartCryptoConnect(QuicConnection* connection) override;
+  QuicConnection* GetConnectionForNextStreamFrame() override;
 
   // Called on every incoming packet. Passes |packet| through to |connection_|.
   virtual void ProcessUdpPacket(const QuicSocketAddress& self_address,

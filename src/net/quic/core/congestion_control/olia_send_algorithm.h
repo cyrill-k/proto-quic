@@ -32,7 +32,8 @@ public:
 override  ;
 
   const int kInitialRttMs = 100;
-  const double kMultiplicativeDecreaseFactor = 0.7;
+  const double kMultiplicativeDecreaseFactor = 0.5;
+  const QuicByteCount kMaxBurstBytes = 3 * kDefaultTCPMSS;
 
   void OnCongestionEvent(
       const QuicSubflowDescriptor& descriptor, bool rtt_updated,
@@ -49,15 +50,16 @@ override  ;
       bool packets_retransmitted) override;
 
   void AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
-      RttStats* rttStats) override;
+      RttStats* rttStats, QuicUnackedPacketMap* unackedPacketMap) override;
 
   void SetPacketHandlingMethod(QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod);
 
 private:
-  void Ack(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
-  void Loss(const QuicSubflowDescriptor& descriptor,QuicPacketLength length, QuicByteCount priorInFlight);
-  void AckCongestionAvoidance(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
-  void LossCongestionAvoidance(const QuicSubflowDescriptor& descriptor,QuicPacketLength length);
+  void Ack(const QuicSubflowDescriptor& descriptor, QuicPacketLength length, QuicByteCount priorInFlight);
+  void Loss(const QuicSubflowDescriptor& descriptor, QuicPacketLength length, QuicByteCount priorInFlight);
+  void AckSlowStart(const QuicSubflowDescriptor& descriptor,QuicByteCount prior_in_flight);
+  void AckCongestionAvoidance(const QuicSubflowDescriptor& descriptor, QuicPacketLength length, QuicByteCount prior_in_flight);
+  void LossCongestionAvoidance(const QuicSubflowDescriptor& descriptor, QuicPacketLength length);
   QuicByteCount GetMaximumSegmentSize(const QuicSubflowDescriptor& descriptor);
   QuicByteCount GetMinimumSlowStartThreshold(const QuicSubflowDescriptor& descriptor);
   QuicByteCount GetMinimumCongestionWindow(const QuicSubflowDescriptor& descriptor);
@@ -68,6 +70,8 @@ private:
   QuicByteCount l(const QuicSubflowDescriptor& descriptor);
   bool IsInMaxWPaths(const QuicSubflowDescriptor& descriptor);
   bool IsInCollectedPaths(const QuicSubflowDescriptor& descriptor);
+  unsigned int NumberOfPaths();
+  bool IsCwndLimited(const QuicSubflowDescriptor& descriptor, QuicByteCount bytes_in_flight);
 
   struct OliaSubflowParameters {
     OliaSubflowParameters() : l1r(0), l2r(0), id(current_id_++) {

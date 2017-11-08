@@ -236,7 +236,8 @@ int main(int argc, char* argv[]) {
             "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
             "--client-ports              List of client ports used: port0,port1,...\n"
             "--client-ip                 Specifiy the client ip\n"
-            "--repetitions               The number of identical sequential http requests.\n";
+            "--repetitions               The number of identical sequential http requests.\n"
+            "--subflows                  The number of subflows that should be created. At least 1.\n";
     cout << help_str;
     exit(0);
   }
@@ -327,6 +328,17 @@ int main(int argc, char* argv[]) {
       return 1;
     }
   }
+  int nSubflows = 1;
+  if (line->HasSwitch("subflows")) {
+      if (!base::StringToInt(line->GetSwitchValueASCII("subflows"), &nSubflows)) {
+        std::cerr << "--subflows must be an integer\n";
+        return 1;
+      }
+      if(nSubflows < 1) {
+        std::cerr << "--subflows need at least one subflow";
+        return 1;
+      }
+    }
   QuicMultipathConfiguration mpConfig =
       QuicMultipathConfiguration::CreateClientConfiguration(
           packetSchedulingMethod, ackHandlingMethod, clientPorts,
@@ -449,10 +461,10 @@ int main(int argc, char* argv[]) {
   // Make sure to store the response, for later output.
   client.set_store_response(true);
 
-  cout << "++++++++++ Adding new subflow:" << endl;
-  client.AddSubflow();
-  //client.AddSubflow();
-  //client.UseSubflowId(3);
+  for(int i = 0;i < nSubflows-1; ++i) {
+    cout << "++++++++++ Adding new subflow:" << endl;
+    client.AddSubflow();
+  }
 
   for (int i = 0; i < nRepetitions; ++i) {
     RequestSite(client, header_block, body,

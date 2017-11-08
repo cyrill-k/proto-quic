@@ -29,7 +29,7 @@ void OliaSendAlgorithm::OnCongestionEvent(
         GetParameters(descriptor).rtt_stats->smoothed_rtt());
   }
   for (std::pair<QuicPacketNumber, QuicPacketLength> p : acked_packets) {
-    Ack(descriptor, p.second);
+    Ack(descriptor, p.second, prior_in_flight);
   }
   for (std::pair<QuicPacketNumber, QuicPacketLength> p : lost_packets) {
     Loss(descriptor, p.second, prior_in_flight);
@@ -40,7 +40,6 @@ bool OliaSendAlgorithm::OnPacketSent(const QuicSubflowDescriptor& descriptor,
     QuicTime sent_time, QuicByteCount bytes_in_flight,
     QuicPacketNumber packet_number, QuicByteCount bytes,
     HasRetransmittableData is_retransmittable) {
-  GetMutableParameters(descriptor).bytes_in_flight = bytes_in_flight + bytes;
   return true;
 }
 
@@ -55,8 +54,10 @@ void OliaSendAlgorithm::OnRetransmissionTimeout(
 }
 
 void OliaSendAlgorithm::AddSubflow(
-    const QuicSubflowDescriptor& subflowDescriptor, RttStats* rttStats) {
-  MultipathSendAlgorithmInterface::AddSubflow(subflowDescriptor, rttStats);
+    const QuicSubflowDescriptor& subflowDescriptor, RttStats* rttStats,
+    QuicUnackedPacketMap* unackedPacketMap) {
+  MultipathSendAlgorithmInterface::AddSubflow(subflowDescriptor, rttStats,
+      unackedPacketMap);
   olia_parameters_.insert(
       std::pair<const QuicSubflowDescriptor, OliaSubflowParameters>(
           subflowDescriptor, OliaSubflowParameters()));
@@ -69,11 +70,11 @@ void OliaSendAlgorithm::SetPacketHandlingMethod(
 }
 
 void OliaSendAlgorithm::Ack(const QuicSubflowDescriptor& descriptor,
-    QuicPacketLength length) {
+    QuicPacketLength length, QuicByteCount prior_in_flight) {
   if (InSlowStart(descriptor)) {
-    w(descriptor) += GetMaximumSegmentSize(descriptor);
+    AckSlowStart(descriptor, prior_in_flight);
   } else {
-    AckCongestionAvoidance(descriptor, length);
+    AckCongestionAvoidance(descriptor, length, prior_in_flight);
   }
 
   if (logging_interface_) {
@@ -95,72 +96,92 @@ void OliaSendAlgorithm::Loss(const QuicSubflowDescriptor& descriptor,
     logging_interface_->OnLoss(descriptor, length, w(descriptor));
   }
 }
+void OliaSendAlgorithm::AckSlowStart(const QuicSubflowDescriptor& descriptor,
+    QuicByteCount prior_in_flight) {
+  if (IsCwndLimited(descriptor, prior_in_flight)) {
+    QUIC_LOG(INFO)
+        << "ACK(" << GetOliaParameters(descriptor).id << "," << rtt(descriptor)
+            << ") cwnd blocked(" << w(descriptor) << " -> "
+            << w(descriptor) + GetMaximumSegmentSize(descriptor) << ")";
+    w(descriptor) += GetMaximumSegmentSize(descriptor);
+  } else {
+    QUIC_LOG(INFO)
+        << "ACK(" << GetOliaParameters(descriptor).id << "," << rtt(descriptor)
+            << ") Not cwnd blocked (" << w(descriptor) << ").";
+  }
+}
 
 void OliaSendAlgorithm::AckCongestionAvoidance(
-    const QuicSubflowDescriptor& descriptor, QuicPacketLength length) {
+    const QuicSubflowDescriptor& descriptor, QuicPacketLength length,
+    QuicByteCount prior_in_flight) {
   GetOliaParameters(descriptor).l2r += length;
 
-  DeterminePaths();
+  if (!IsCwndLimited(descriptor, prior_in_flight)) {
+    QUIC_LOG(WARNING)
+        << "ACK(" << GetOliaParameters(descriptor).id << "," << length << ","
+            << rtt(descriptor) << ") Not cwnd blocked.";
+  } else {
+    DeterminePaths();
 
-  double alpha = 0;
-  if (collected_paths_.find(descriptor) != collected_paths_.end()) {
-    alpha = 1.0
-        / (w(descriptor) * olia_parameters_.size() * collected_paths_.size());
-  } else if (max_w_paths_.find(descriptor) != max_w_paths_.end()
-      && !collected_paths_.empty()) {
-    alpha = -1.0
-        / (w(descriptor) * olia_parameters_.size() * max_w_paths_.size());
+    double alpha = 0;
+    if (IsInCollectedPaths(descriptor)) {
+      alpha = 1.0 / (NumberOfPaths() * collected_paths_.size());
+    } else if (IsInMaxWPaths(descriptor) && !collected_paths_.empty()) {
+      alpha = -1.0 / (NumberOfPaths() * max_w_paths_.size());
+    }
+
+    double sum = 0;
+    for (std::pair<QuicSubflowDescriptor, OliaSubflowParameters> p : olia_parameters_) {
+      sum += ((double) w(p.first)) / rtt(p.first);
+    }
+
+    double MSS_r = GetMaximumSegmentSize(descriptor);
+
+    double left_term = w(descriptor) / (rtt(descriptor) * rtt(descriptor))
+        / (sum * sum);
+
+    double right_term = alpha / w(descriptor);
+
+    double w_increase = (left_term + right_term) * MSS_r
+        * length;//GetOliaParameters(descriptor).l2r;
+
+    QUIC_LOG(WARNING)
+        << "ACK(" << GetOliaParameters(descriptor).id << "," << length << ","
+            << rtt(descriptor) << ") w_r_new[" << (w(descriptor) + w_increase)
+            << "] = w_r[" << w(descriptor) << "]+(" << left_term << "+alpha["
+            << alpha << "]/w_r[" << w(descriptor) << "]["<<(alpha/w(descriptor)) << "])*MSS_r[" << MSS_r << "]*bytes_acked["
+            << GetOliaParameters(descriptor).l2r << "] [" << w_increase << "]";
+
+    w(descriptor) += w_increase;
+
+    //  For each ACK on the path r:
+    //
+    //   - If r is in collected_paths, increase w_r by
+    //
+    //        w_r/rtt_r^2                          1
+    //    -------------------    +     -----------------------       (2)
+    //   (SUM (w_p/rtt_p))^2    w_r * number_of_paths * |collected_paths|
+    //
+    //   multiplied by MSS_r * bytes_acked.
+    //
+    //
+    //   - If r is in max_w_paths and if collected_paths is not empty,
+    //   increase w_r by
+    //
+    //         w_r/rtt_r^2                         1
+    //    --------------------    -     ------------------------     (3)
+    //    (SUM (w_r/rtt_r))^2     w_r * number_of_paths * |max_w_paths|
+    //
+    //   multiplied by MSS_r * bytes_acked.
+    //
+    //   - Otherwise, increase w_r by
+    //
+    //                          (w_r/rtt_r^2)
+    //                  ----------------------------------           (4)
+    //                         (SUM (w_r/rtt_r))^2
+    //
+    //   multiplied by MSS_r * bytes_acked.
   }
-
-  double sum = 0;
-  for (std::pair<QuicSubflowDescriptor, OliaSubflowParameters> p : olia_parameters_) {
-    sum += ((double) w(p.first)) / rtt(descriptor);
-  }
-
-  double MSS_r = GetMaximumSegmentSize(descriptor);
-
-  double left_term = w(descriptor) / (rtt(descriptor) * rtt(descriptor))
-      / (sum * sum);
-
-  double w_increase = (left_term + alpha) * MSS_r
-      * GetOliaParameters(descriptor).l2r;
-
-  QUIC_LOG(INFO)
-      << "ACK(" << GetOliaParameters(descriptor).id << "," << length << ","
-          << rtt(descriptor) << ") w_r_new[" << (w(descriptor) + w_increase)
-          << "] = w_r[" << w(descriptor) << "]+(" << left_term << "+alpha["
-          << alpha << "])*MSS_r[" << MSS_r << "]*bytes_acked["
-          << GetOliaParameters(descriptor).l2r << "] [" << w_increase << "]";
-
-  w(descriptor) += w_increase;
-
-  //  For each ACK on the path r:
-  //
-  //   - If r is in collected_paths, increase w_r by
-  //
-  //        w_r/rtt_r^2                          1
-  //    -------------------    +     -----------------------       (2)
-  //   (SUM (w_p/rtt_p))^2    w_r * number_of_paths * |collected_paths|
-  //
-  //   multiplied by MSS_r * bytes_acked.
-  //
-  //
-  //   - If r is in max_w_paths and if collected_paths is not empty,
-  //   increase w_r by
-  //
-  //         w_r/rtt_r^2                         1
-  //    --------------------    -     ------------------------     (3)
-  //    (SUM (w_r/rtt_r))^2     w_r * number_of_paths * |max_w_paths|
-  //
-  //   multiplied by MSS_r * bytes_acked.
-  //
-  //   - Otherwise, increase w_r by
-  //
-  //                          (w_r/rtt_r^2)
-  //                  ----------------------------------           (4)
-  //                         (SUM (w_r/rtt_r))^2
-  //
-  //   multiplied by MSS_r * bytes_acked.
 }
 
 void OliaSendAlgorithm::LossCongestionAvoidance(
@@ -262,6 +283,20 @@ bool OliaSendAlgorithm::IsInMaxWPaths(const QuicSubflowDescriptor& descriptor) {
 bool OliaSendAlgorithm::IsInCollectedPaths(
     const QuicSubflowDescriptor& descriptor) {
   return collected_paths_.find(descriptor) != collected_paths_.end();
+}
+unsigned int OliaSendAlgorithm::NumberOfPaths() {
+  return olia_parameters_.size();
+}
+bool OliaSendAlgorithm::IsCwndLimited(const QuicSubflowDescriptor& descriptor,
+    QuicByteCount bytes_in_flight) {
+  const QuicByteCount congestion_window = w(descriptor);
+  if (bytes_in_flight >= congestion_window) {
+    return true;
+  }
+  const QuicByteCount available_bytes = congestion_window - bytes_in_flight;
+  const bool slow_start_limited = InSlowStart(descriptor)
+      && bytes_in_flight > congestion_window / 2;
+  return slow_start_limited || available_bytes <= kMaxBurstBytes;
 }
 
 } // namespace net

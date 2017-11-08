@@ -101,7 +101,7 @@ QuicSentPacketManager::~QuicSentPacketManager() {}
 void QuicSentPacketManager::SetMultipathSendAlgorithm(
     MultipathSendAlgorithmInterface* sendAlgorithm) {
   send_algorithm_ = sendAlgorithm;
-  send_algorithm_->AddSubflow(subflow_descriptor_, &rtt_stats_);
+  send_algorithm_->AddSubflow(subflow_descriptor_, &rtt_stats_, &unacked_packets_);
 }
 
 void QuicSentPacketManager::SetFromConfig(const QuicConfig& config) {

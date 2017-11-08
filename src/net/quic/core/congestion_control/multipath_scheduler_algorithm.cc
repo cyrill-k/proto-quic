@@ -46,6 +46,13 @@ std::list<QuicSubflowDescriptor> MultipathSchedulerAlgorithm::GetSubflowPriority
   }
   std::list<QuicSubflowDescriptor> pOut;
   std::transform(p.begin(), p.end(), std::back_inserter(pOut), [](const SubflowWithRtt& a) { return a.GetSubflowDescriptor(); });
+
+  std::string s;
+  for(const QuicSubflowDescriptor& d: pOut) {
+    s += (s==""?"":",") + d.ToString();
+  }
+  QUIC_LOG(INFO) << "subflow priority = " << s;
+
   return pOut;
 }
 void MultipathSchedulerAlgorithm::UsedSubflow(

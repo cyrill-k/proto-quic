@@ -22,7 +22,9 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
         new OliaSendAlgorithm(
             new MultipathSchedulerAlgorithm(
                 QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING))), logger_(
-        new QuicConnectionManagerLogger("test.out", connection->clock(), this)) {
+        new QuicConnectionManagerLogger("test.out", connection->clock(), this)),
+        resume_writes_alarm_(connection->alarm_factory()->CreateAlarm(
+            new ResumeWritesAlarmDelegate(this))) {
   connection->SetMultipathSendAlgorithm(GetSendAlgorithm());
   AddConnection(connection->SubflowDescriptor(), kInitialSubflowId, connection);
   connection->set_visitor(this);
@@ -119,8 +121,11 @@ QuicConsumedData QuicConnectionManager::SendStreamData(QuicStreamId id,
       GetSendAlgorithm()->GetNextStreamFrameSubflow(id, iov.total_length, hint,
           reason);
   p("Using subflow", descriptor);
-  return GetConnection(descriptor)->SendStreamData(id, iov, offset, state,
+  QuicConsumedData cdata = GetConnection(descriptor)->SendStreamData(id, iov, offset, state,
       ack_listener);
+
+  QUIC_LOG(WARNING) << descriptor.ToString() << " consumed = " << cdata.bytes_consumed;
+  return cdata;
 }
 
 QuicConnection* QuicConnectionManager::GetConnectionForNextStreamFrame(
@@ -697,6 +702,30 @@ void QuicConnectionManager::OnAckFrameUpdated(QuicConnection* connection) {
   multipath_send_algorithm_->OnAckFrameUpdated(connection->SubflowDescriptor());
 }
 
+QuicConnection* QuicConnectionManager::GetConnectionForNextStreamFrame() {
+  return visitor_->GetConnectionForNextStreamFrame();
+}
+
+void QuicConnectionManager::SetResumeWritesAlarm() {
+  if(!resume_writes_alarm_->IsSet()) {
+    resume_writes_alarm_->Set(AnyConnection()->clock()->ApproximateNow());
+  }
+}
+
+void QuicConnectionManager::ResumeWritesAlarmFired() {
+  if(visitor_->WillingAndAbleToWrite()) {
+    GetConnectionForNextStreamFrame()->MaybeSetResumeWritesAlarmOnThisSubflow();
+  }
+}
+
+QuicConnectionManager::ResumeWritesAlarmDelegate::ResumeWritesAlarmDelegate(
+    QuicConnectionManager* connectionManager)
+    : connection_manager_(connectionManager) {}
+
+void QuicConnectionManager::ResumeWritesAlarmDelegate::OnAlarm() {
+  connection_manager_->ResumeWritesAlarmFired();
+}
+
 void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
     QuicPacketNumber packetNumber, TransmissionType transmissionType,
     QuicTransmissionInfo* transmission_info) {
@@ -704,6 +733,7 @@ void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
   const QuicSubflowDescriptor& descriptor =
       multipath_send_algorithm_->GetNextRetransmissionSubflow(
           *transmission_info, connection->SubflowDescriptor());
+  QUIC_LOG(INFO) << "Retransmit from " << connection->SubflowDescriptor().ToString() << " on " << descriptor.ToString();
   GetConnection(descriptor)->RetransmitFrames(packetNumber, transmission_info,
       connection->SubflowDescriptor(), transmissionType);
 }

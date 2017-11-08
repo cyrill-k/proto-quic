@@ -20,6 +20,7 @@
 #include "net/quic/core/congestion_control/multipath_scheduler_interface.h"
 #include "net/quic/platform/api/quic_subflow_descriptor.h"
 #include "net/quic/core/quic_config.h"
+#include "net/quic/core/quic_unacked_packet_map.h"
 
 namespace net {
 
@@ -57,7 +58,7 @@ public:
   virtual ~MultipathSendAlgorithmInterface();
 
   virtual void AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
-      RttStats* rttStats);
+      RttStats* rttStats, QuicUnackedPacketMap* unackedPacketMap);
 
   virtual void SetFromConfig(const QuicConfig& config, Perspective perspective);
 
@@ -193,8 +194,6 @@ public:
 protected:
   QuicSubflowDescriptor uninitialized_subflow_descriptor_;
 
-  virtual bool CanSendOnSubflow(const QuicSubflowDescriptor& descriptor,
-      QuicPacketLength length, bool needsForwardSecureEncryption);
   virtual bool FitsCongestionWindow(const QuicSubflowDescriptor& descriptor,
       QuicPacketLength length);
   virtual bool HasForwardSecureSubflow();
@@ -212,7 +211,6 @@ protected:
   // If it is true, we allow subflows with initial or forward secure encryption.
   QuicSubflowDescriptor GetNextSubflow(QuicPacketLength length,
       bool allowInitialEncryption);
-  virtual QuicSubflowDescriptor GetNextPossibleSubflow(QuicPacketLength length);
   virtual QuicSubflowDescriptor GetNextForwardSecureSubflow();
 
   enum SubflowCongestionState {
@@ -222,16 +220,16 @@ protected:
   struct SubflowParameters {
     SubflowParameters() {
     }
-    SubflowParameters(RttStats* rttStats)
-        : rtt_stats(rttStats), congestion_window(
-            kInitialCongestionWindow * kDefaultTCPMSS), bytes_in_flight(0), congestion_state(
+    SubflowParameters(RttStats* rttStats, QuicUnackedPacketMap* unackedPacketMap)
+        : rtt_stats(rttStats), unacked_packet_map(unackedPacketMap), congestion_window(
+            kInitialCongestionWindow * kDefaultTCPMSS), congestion_state(
             SUBFLOW_CONGESTION_SLOWSTART), forward_secure_encryption_established(
             false), encryption_level(ENCRYPTION_NONE), in_slow_start(false), ssthresh(
             std::numeric_limits<QuicByteCount>::max()) {
     }
     RttStats* rtt_stats;
+    QuicUnackedPacketMap* unacked_packet_map;
     QuicByteCount congestion_window;
-    QuicByteCount bytes_in_flight;
     SubflowCongestionState congestion_state;
     bool forward_secure_encryption_established;
     EncryptionLevel encryption_level;
