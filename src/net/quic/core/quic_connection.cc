@@ -610,12 +610,13 @@ bool QuicConnection::SelectMutualVersion(
   return false;
 }
 
-void QuicConnection::OnRetransmission(QuicPacketNumber packet_number,
+bool QuicConnection::OnRetransmission(QuicPacketNumber packet_number,
     TransmissionType transmissionType, QuicTransmissionInfo* transmission_info) {
   DCHECK(visitor_);
   if(visitor_) {
-    visitor_->OnRetransmission(this, packet_number, transmissionType, transmission_info);
+    return visitor_->OnRetransmission(this, packet_number, transmissionType, transmission_info);
   }
+  return false;
 }
 
 QuicTransmissionInfo* QuicConnection::GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) {
@@ -2446,15 +2447,13 @@ void QuicConnection::SetPingAlarm() {
 
 void QuicConnection::SetRetransmissionAlarm() {
   if (delay_setting_retransmission_alarm_) {
-    QUIC_LOG(WARNING) << "Setting the retransmission alarm is is delayed";
+    QUIC_LOG(INFO) << subflow_id_ << "Setting the retransmission alarm is is delayed";
     pending_retransmission_alarm_ = true;
     return;
   }
   QuicTime retransmission_time = sent_packet_manager_.GetRetransmissionTime();
-  QUIC_LOG(WARNING) << subflow_id_ << " The retransmission alarm was set to: " <<retransmission_time.ToDebuggingValue();
-  if(retransmission_time == QuicTime::Zero()) {
-    visitor_->LogSubflowStatus();
-  }
+  QUIC_LOG(INFO) << subflow_id_ << " The retransmission alarm was set to: " <<retransmission_time.ToDebuggingValue();
+  //visitor_->LogSubflowStatus();
   retransmission_alarm_->Update(retransmission_time,
                                 QuicTime::Delta::FromMilliseconds(1));
 }

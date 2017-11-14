@@ -759,17 +759,32 @@ void QuicConnectionManager::ResumeWritesAlarmDelegate::OnAlarm() {
   connection_manager_->ResumeWritesAlarmFired();
 }
 
-void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
+bool QuicConnectionManager::OnRetransmission(QuicConnection* connection,
     QuicPacketNumber packetNumber, TransmissionType transmissionType,
     QuicTransmissionInfo* transmission_info) {
-
-  const QuicSubflowDescriptor& descriptor =
-      GetSendAlgorithm()->GetNextRetransmissionSubflow(
-          *transmission_info, connection->SubflowDescriptor());
-  QUIC_LOG(WARNING) << "Retransmit from " << connection->SubflowDescriptor().ToString() << " on " << descriptor.ToString();
-  GetConnection(descriptor)->RetransmitFrames(packetNumber, transmission_info,
-      connection->SubflowDescriptor(), transmissionType);
-  GetSendAlgorithm()->SentOnSubflow(descriptor, transmission_info->bytes_sent);
+  QuicSubflowDescriptor descriptor;
+  if(transmissionType == TLP_RETRANSMISSION ||
+      transmissionType == RTO_RETRANSMISSION ||
+      transmissionType == HANDSHAKE_RETRANSMISSION) {
+    QUIC_LOG(INFO) << "Retransmit on subflow ("<<
+    (transmissionType==TLP_RETRANSMISSION?"TLP":
+        (transmissionType==RTO_RETRANSMISSION?"rto":"handshake"))<<")" <<
+        connection->SubflowDescriptor().ToString();
+    descriptor = connection->SubflowDescriptor();
+    GetConnection(descriptor)->RetransmitFrames(packetNumber, transmission_info,
+            connection->SubflowDescriptor(), transmissionType);
+  } else {
+    descriptor =
+        GetSendAlgorithm()->GetNextRetransmissionSubflow(
+            *transmission_info, connection->SubflowDescriptor());
+    QUIC_LOG(INFO) << "Retransmit from " <<
+        connection->SubflowDescriptor().ToString() << ""
+            " on " << descriptor.ToString();
+    GetConnection(descriptor)->RetransmitFrames(packetNumber, transmission_info,
+        connection->SubflowDescriptor(), transmissionType);
+    GetSendAlgorithm()->SentOnSubflow(descriptor, transmission_info->bytes_sent);
+  }
+  return connection->SubflowDescriptor() == descriptor;
 }
 
 QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(

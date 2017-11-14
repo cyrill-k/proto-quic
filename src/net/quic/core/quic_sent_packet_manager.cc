@@ -415,7 +415,7 @@ void QuicSentPacketManager::NeuterUnencryptedPackets() {
   }
 }
 
-void QuicSentPacketManager::MarkForRetransmission(
+bool QuicSentPacketManager::MarkForRetransmission(
     QuicPacketNumber packet_number, TransmissionType transmission_type) {
   const QuicTransmissionInfo& transmission_info =
       unacked_packets_.GetTransmissionInfo(packet_number);
@@ -431,10 +431,10 @@ void QuicSentPacketManager::MarkForRetransmission(
   // retransmissions for the same data, which is not ideal.
   if (retransmission_visitor_->IsPendingRetransmission(
       QuicPacketDescriptor(subflow_descriptor_, packet_number))) {
-    return;
+    return false;
   }
 
-  retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
+  return retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
       unacked_packets_.GetMutableTransmissionInfo(packet_number));
 }
 

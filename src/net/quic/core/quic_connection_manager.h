@@ -249,7 +249,7 @@ override  ;
   bool OnAckFrame(QuicConnection* connection, const QuicAckFrame& frame, const QuicTime& arrival_time_of_packet) override;
   void OnNewSubflowFrame(QuicConnection* connection, const QuicNewSubflowFrame& frame) override;
   void OnSubflowCloseFrame(QuicConnection* connection, const QuicSubflowCloseFrame& frame) override;
-  void OnRetransmission(QuicConnection* connection, QuicPacketNumber packetNumber, TransmissionType transmissionType, QuicTransmissionInfo* transmissionInfo) override;
+  bool OnRetransmission(QuicConnection* connection, QuicPacketNumber packetNumber, TransmissionType transmissionType, QuicTransmissionInfo* transmissionInfo) override;
   QuicTransmissionInfo* GetTransmissionInfo(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) override;
   void RemoveRetransmittability(QuicConnection* connection, const QuicPacketDescriptor& packetDescriptor) override;
   QuicPacketNumber GetLargestObserved(QuicConnection* connection, const QuicSubflowDescriptor& subflowDescriptor) override;

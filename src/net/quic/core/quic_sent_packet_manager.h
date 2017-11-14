@@ -109,7 +109,7 @@ public:
     virtual ~RetransmissionVisitor() {
     }
 
-    virtual void OnRetransmission(QuicPacketNumber packet_number,
+    virtual bool OnRetransmission(QuicPacketNumber packet_number,
         TransmissionType transmissionType,
         QuicTransmissionInfo* transmission_info) = 0;
 
@@ -405,7 +405,7 @@ private:
   // Request that |packet_number| be retransmitted after the other pending
   // retransmissions.  Does not add it to the retransmissions if it's already
   // a pending retransmission.
-  void MarkForRetransmission(QuicPacketNumber packet_number,
+  bool MarkForRetransmission(QuicPacketNumber packet_number,
       TransmissionType transmission_type);
 
   // Sets the send algorithm to the given congestion control type and points the

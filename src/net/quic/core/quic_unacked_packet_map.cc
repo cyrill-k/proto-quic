@@ -29,15 +29,21 @@ void QuicUnackedPacketMap::PrintSessionState() const {
   QuicPacketNumber packet_number = least_unacked_;
   int sum = 0;
   std::string s;
+  bool hasretrans = false;
   for (UnackedPacketMap::const_iterator it = unacked_packets_.begin();
        it != unacked_packets_.end(); ++it, ++packet_number) {
-    std::string m = packet_number == least_unacked_ ? "" : ",";
+    if(!it->retransmittable_frames.empty()) {
+      hasretrans = true;
+    }
+    /*std::string m = packet_number == least_unacked_ ? "" : ",";
     s += m + "[" + std::to_string(packet_number )+ "," + std::to_string(it->in_flight)
     + "," + std::to_string(it->is_unackable) + "," + std::to_string(it->retransmittable_frames.empty()) + "]";
-    if(it->in_flight) sum += it->bytes_sent;
+    if(it->in_flight) sum += it->bytes_sent;*/
 
   }
-  QUIC_LOG(WARNING) << s << " sum of in flight = " << sum << " bytes_in_flight_ = " << bytes_in_flight_;
+  QUIC_LOG(INFO) << s << " sum of in flight = " << sum << " bytes_in_flight_ = " <<
+      bytes_in_flight_ << " has retransmittable pkts = " <<
+      hasretrans;
 }
 
 void QuicUnackedPacketMap::AddSentPacket(SerializedPacket* packet,

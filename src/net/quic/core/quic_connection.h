@@ -179,7 +179,7 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
   virtual void OnSubflowCloseFrame(QuicConnection* connection,
       const QuicSubflowCloseFrame& frame) = 0;
 
-  virtual void OnRetransmission(QuicConnection* connection,
+  virtual bool OnRetransmission(QuicConnection* connection,
       QuicPacketNumber packetNumber, TransmissionType transmissionType,
       QuicTransmissionInfo* transmissionInfo) = 0;
 
@@ -627,7 +627,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   }
 
   // From RetransmissionVisitor
-  void OnRetransmission(QuicPacketNumber packet_number,
+  bool OnRetransmission(QuicPacketNumber packet_number,
       TransmissionType transmissionType, QuicTransmissionInfo* transmission_info) override;
   QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) override;
   void RemoveRetransmittability(const QuicPacketDescriptor& packetDescriptor) override;
