@@ -31,21 +31,23 @@ public:
   QuicMultipathConfiguration();
   QuicMultipathConfiguration(const QuicMultipathConfiguration& other);
   QuicMultipathConfiguration(PacketScheduling packetScheduling,
-      AckSending ackSending);
+      AckSending ackSending, bool usingPacing);
   QuicMultipathConfiguration(PacketScheduling packetScheduling,
       AckSending ackSending, std::vector<unsigned int> clientPorts,
-      QuicIpAddress clientIpAddress);
+      QuicIpAddress clientIpAddress, bool usingPacing);
   ~QuicMultipathConfiguration();
 
   static QuicMultipathConfiguration CreateClientConfiguration(
       PacketScheduling packetScheduling, AckSending ackSending,
-      std::vector<unsigned int> clientPorts);
+      std::vector<unsigned int> clientPorts, bool usingPacing);
   static QuicMultipathConfiguration CreateClientConfiguration(
       PacketScheduling packetScheduling, AckSending ackSending,
-      std::vector<unsigned int> clientPorts, QuicIpAddress clientIpAddress);
+      std::vector<unsigned int> clientPorts, QuicIpAddress clientIpAddress,
+      bool usingPacing);
 
   static QuicMultipathConfiguration CreateServerConfiguration(
-      PacketScheduling packetScheduling, AckSending ackSending);
+      PacketScheduling packetScheduling, AckSending ackSending,
+      bool usingPacing);
 
   PacketScheduling GetPacketSchedulingConfiguration() const {
     return packet_scheduling_;
@@ -59,12 +61,16 @@ public:
   const QuicIpAddress& GetClientIpAddress() const {
     return client_ip_address_;
   }
+  bool GetUsingPacing() const {
+    return using_pacing_;
+  }
 
 private:
   PacketScheduling packet_scheduling_;
   AckSending ack_sending_;
   std::vector<unsigned int> client_ports_;
   QuicIpAddress client_ip_address_;
+  bool using_pacing_;
 };
 
 }

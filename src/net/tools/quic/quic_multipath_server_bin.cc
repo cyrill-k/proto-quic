@@ -19,8 +19,17 @@
 #include "net/tools/quic/quic_http_response_cache.h"
 #include "net/tools/quic/quic_multipath_server.h"
 #include "net/quic/core/quic_multipath_configuration.h"
+#include "net/quic/platform/api/quic_flags.h"
+#include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
+#include "net/quic/core/congestion_control/olia_send_algorithm.h"
+#include "net/quic/core/quic_bandwidth.h"
+#include "net/quic/core/quic_connection_manager.h"
 
 using net::QuicMultipathConfiguration;
+using net::MultipathSendAlgorithmInterface;
+using net::OliaSendAlgorithm;
+using net::QuicBandwidth;
+using net::QuicConnectionManager;
 
 // The port the quic server will listen on.
 int32_t FLAGS_port = 6121;
@@ -55,7 +64,8 @@ int main(int argc, char* argv[]) {
         "--certificate_file=<file>   path to the certificate chain\n"
         "--key_file=<file>           path to the pkcs8 private key\n"
         "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
-        "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n";
+        "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
+        "--disable-pacing            Disables pacing\n";
     std::cout << help_str;
     exit(0);
   }
@@ -71,6 +81,10 @@ int main(int argc, char* argv[]) {
       LOG(ERROR) << "--port must be an integer\n";
       return 1;
     }
+  }
+  bool disablePacing = false;
+  if (line->HasSwitch("disable-pacing")) {
+    disablePacing = true;
   }
 
   if (!line->HasSwitch("certificate_file")) {
@@ -113,11 +127,44 @@ int main(int argc, char* argv[]) {
           QuicMultipathConfiguration::PacketScheduling::SMALLEST_RTT_FIRST;
     }
   }
-
   QuicMultipathConfiguration mpConf =
       QuicMultipathConfiguration::CreateServerConfiguration(
-          packetSchedulingMethod, ackHandlingMethod);
+          packetSchedulingMethod, ackHandlingMethod, !disablePacing);
   net::QuicConfig config;
+
+  if(line->HasSwitch("disable-prr")) {
+    MultipathSendAlgorithmInterface::noPrr = true;
+    std::cerr << "disable-prr" << std::endl;
+  }
+  if(line->HasSwitch("enable-rate-based-sending")) {
+    MultipathSendAlgorithmInterface::rateBasedSending = true;
+    std::cerr << "enable-rate-based-sending" << std::endl;
+  }
+  if(line->HasSwitch("enable-slow-start-large-reduction")) {
+    MultipathSendAlgorithmInterface::slowStartLargeReduction = true;
+    std::cerr << "enable-slow-start-large-reduction" << std::endl;
+  }
+  if(line->HasSwitch("path-update-frequency")) {
+    int path_frequency;
+    if (!base::StringToInt(line->GetSwitchValueASCII("path-update-frequency"), &path_frequency)) {
+      std::cerr << "--determine-path-frequency must be an integer\n";
+      return 1;
+    }
+    OliaSendAlgorithm::pathUpdateFrequency = path_frequency;
+    std::cerr << "path-update-frequency=" << path_frequency << std::endl;
+  }
+  /*QuicBandwidth maxBandwidth = QuicBandwidth::Zero();
+  if(line->HasSwitch("max-bandwidth")) {
+    int b;
+    if (!base::StringToInt(line->GetSwitchValueASCII("max-bandwidth"), &b)) {
+      std::cerr << "--max-bandwidth must be an integer\n";
+      return 1;
+    }
+    maxBandwidth = QuicBandwidth::FromKBitsPerSecond(b);
+    QuicConnectionManager::MAX_BANDWIDTH = maxBandwidth;
+    std::cerr << "max-bandwidth=" << maxBandwidth.ToKBitsPerSecond() << "Kbps" << std::endl;
+  }*/
+
   net::QuicMultipathServer server(
       CreateProofSource(line->GetSwitchValuePath("certificate_file"),
           line->GetSwitchValuePath("key_file")), config,

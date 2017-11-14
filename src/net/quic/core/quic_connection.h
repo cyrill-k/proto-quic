@@ -208,6 +208,8 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
   virtual QuicConnection* GetConnectionForNextStreamFrame() = 0;
 
   virtual void SetResumeWritesAlarm() = 0;
+
+  virtual void LogSubflowStatus() = 0;
 };
 
 // Class that receives callbacks from the connection whenever events happen that should
@@ -433,7 +435,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
                  Perspective perspective,
                  const QuicVersionVector& supported_versions,
                  QuicSubflowId subflow_id,
-                 MultipathSendAlgorithmInterface* sendAlgorithm);
+                 MultipathSendAlgorithmInterface* sendAlgorithm,
+                 bool usePacing);
   QuicConnection(QuicConnectionId connection_id,
                  QuicSocketAddress self_address,
                  QuicSocketAddress peer_address,
@@ -447,7 +450,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
                  bool owns_framer,
                  bool do_not_perform_handshake,
                  QuicSubflowId subflow_id,
-                 MultipathSendAlgorithmInterface* sendAlgorithm);
+                 MultipathSendAlgorithmInterface* sendAlgorithm,
+                 bool usePacing);
   ~QuicConnection() override;
 
   // Debugging purposes
@@ -464,7 +468,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
       QuicPacketWriter *writer,
       bool owns_writer,
       QuicSubflowId subflowId,
-      MultipathSendAlgorithmInterface* sendAlgorithm);
+      MultipathSendAlgorithmInterface* sendAlgorithm,
+      bool usePacing);
 
   // Set the ownership of the QuicFramer
   void SetOwnsFramer(bool owns_framer) { owns_framer_ = owns_framer; }
@@ -831,8 +836,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
     return &sent_packet_manager_;
   }
 
-  void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* send_algorithm) {
-    sent_packet_manager_.SetMultipathSendAlgorithm(send_algorithm);
+  void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* send_algorithm, bool usePacing) {
+    sent_packet_manager_.SetMultipathSendAlgorithm(send_algorithm, usePacing);
   }
 
   bool CanWrite(HasRetransmittableData retransmittable);

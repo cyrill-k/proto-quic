@@ -70,6 +70,14 @@ QuicSession::~QuicSession() {
       << GetNumLocallyClosedOutgoingStreamsHighestOffset();
 }
 
+void QuicSession::PrintSessionState() {
+  /*QUIC_LOG(WARNING) << "blocked crypto or header = " <<
+      write_blocked_streams_.HasWriteBlockedCryptoOrHeadersStream() <<
+      " flow controls: " << flow_controller_.IsBlocked() <<
+      " blocked data sstream: " << write_blocked_streams_.HasWriteBlockedDataStreams();
+  connection_manager_->PrintSessionState();*/
+}
+
 void QuicSession::OnStreamFrame(const QuicStreamFrame& frame, QuicConnection *connection) {
   // TODO(rch) deal with the error case of stream id 0.
   QuicStreamId stream_id = frame.stream_id;

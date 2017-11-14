@@ -57,14 +57,12 @@ QuicServerSessionBase* QuicSimpleDispatcher::CreateQuicSession(
       connection_id, server_address, client_address, helper(), alarm_factory(),
       CreatePerConnectionWriter(),
       /* owns_writer= */ true, Perspective::IS_SERVER, GetSupportedVersions(),
-      kInitialSubflowId, nullptr);
+      kInitialSubflowId, nullptr, false);
 
   QuicServerSessionBase* session = new QuicSimpleServerSession(
       config(), connection, this, session_helper(), crypto_config(),
       compressed_certs_cache(), response_cache_);
-  session->connection_manager()->set_congestion_method(
-      multipath_configuration_.GetPacketSchedulingConfiguration(),
-      multipath_configuration_.GetAckSendingConfiguration());
+  session->connection_manager()->set_multipath_configuration(multipath_configuration_);
   session->Initialize();
   return session;
 }

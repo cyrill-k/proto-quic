@@ -61,7 +61,8 @@ QuicTime::Delta PrrSender::TimeUntilSend(
   // Checks a simplified version of the PRR formula that doesn't use division:
   // AvailableSendWindow =
   //   CEIL(prr_delivered * ssthresh / BytesInFlightAtLoss) - prr_sent
-  if (bytes_delivered_since_loss_ * slowstart_threshold >
+  if (slowstart_threshold == std::numeric_limits<QuicByteCount>::max() ||
+      bytes_delivered_since_loss_ * slowstart_threshold >
       bytes_sent_since_loss_ * bytes_in_flight_before_loss_) {
     return QuicTime::Delta::Zero();
   }

@@ -16,9 +16,7 @@
 #include "base/macros.h"
 #include "net/quic/core/congestion_control/general_loss_algorithm.h"
 #include "net/quic/core/congestion_control/loss_detection_interface.h"
-#include "net/quic/core/congestion_control/pacing_sender.h"
 #include "net/quic/core/congestion_control/rtt_stats.h"
-#include "net/quic/core/congestion_control/send_algorithm_interface.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_pending_retransmission.h"
 #include "net/quic/core/quic_sustained_bandwidth_recorder.h"
@@ -28,13 +26,14 @@
 #include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
 #include "net/quic/platform/api/quic_subflow_descriptor.h"
 #include "net/quic/core/quic_packet_descriptor.h"
+#include "net/quic/core/congestion_control/multipath_pacing_sender.h"
 
 namespace net {
 
 namespace test {
 class QuicConnectionPeer;
 class QuicSentPacketManagerPeer;
-}  // namespace test
+} // namespace test
 
 class QuicClock;
 class QuicConfig;
@@ -45,51 +44,54 @@ struct QuicConnectionStats;
 // retransmittable data associated with each packet. If a packet is
 // retransmitted, it will keep track of each version of a packet so that if a
 // previous transmission is acked, the data will not be retransmitted.
-class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::RetransmissionVisitor {
- public:
+class QUIC_EXPORT_PRIVATE QuicSentPacketManager: public QuicUnackedPacketMap::RetransmissionVisitor {
+public:
   // Interface which gets callbacks from the QuicSentPacketManager at
   // interesting points.  Implementations must not mutate the state of
   // the packet manager or connection as a result of these callbacks.
   class QUIC_EXPORT_PRIVATE DebugDelegate {
-   public:
-    virtual ~DebugDelegate() {}
+  public:
+    virtual ~DebugDelegate() {
+    }
 
     // Called when a spurious retransmission is detected.
     virtual void OnSpuriousPacketRetransmission(
-        TransmissionType transmission_type,
-        QuicByteCount byte_size) {}
+        TransmissionType transmission_type, QuicByteCount byte_size) {
+    }
 
     virtual void OnIncomingAck(const QuicAckFrame& ack_frame,
-                               QuicTime ack_receive_time,
-                               QuicPacketNumber largest_observed,
-                               bool rtt_updated,
-                               QuicPacketNumber least_unacked_sent_packet) {}
+        QuicTime ack_receive_time, QuicPacketNumber largest_observed,
+        bool rtt_updated, QuicPacketNumber least_unacked_sent_packet) {
+    }
 
     virtual void OnPacketLoss(QuicPacketNumber lost_packet_number,
-                              TransmissionType transmission_type,
-                              QuicTime detection_time) {}
+        TransmissionType transmission_type, QuicTime detection_time) {
+    }
   };
 
   // Interface which gets callbacks from the QuicSentPacketManager when
   // events that should be logged happen. Implementations must not mutate
   // the state of the packet manager as a result of these callbacks.
   class QUIC_EXPORT_PRIVATE LoggingDelegate {
-     public:
-      virtual ~LoggingDelegate() {}
+  public:
+    virtual ~LoggingDelegate() {
+    }
 
-      virtual void OnPacketAcknowledged(QuicPacketNumber packetNumber,
-          QuicPacketLength packetLength, QuicTime::Delta ackDelayTime, QuicTime::Delta rtt) = 0;
+    virtual void OnPacketAcknowledged(QuicPacketNumber packetNumber,
+        QuicPacketLength packetLength, QuicTime::Delta ackDelayTime,
+        QuicTime::Delta rtt) = 0;
 
-      virtual void OnPacketLost(QuicPacketNumber packetNumber, QuicPacketLength packetLength,
-          TransmissionType transmissionType) = 0;
-    };
+    virtual void OnPacketLost(QuicPacketNumber packetNumber,
+        QuicPacketLength packetLength, TransmissionType transmissionType) = 0;
+  };
 
   // Interface which gets callbacks from the QuicSentPacketManager when
   // network-related state changes. Implementations must not mutate the
   // state of the packet manager as a result of these callbacks.
   class QUIC_EXPORT_PRIVATE NetworkChangeVisitor {
-   public:
-    virtual ~NetworkChangeVisitor() {}
+  public:
+    virtual ~NetworkChangeVisitor() {
+    }
 
     // Called when congestion window or RTT may have changed.
     virtual void OnCongestionChange() = 0;
@@ -103,43 +105,49 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   };
 
   class QUIC_EXPORT_PRIVATE RetransmissionVisitor {
-    public:
-      virtual ~RetransmissionVisitor() {}
+  public:
+    virtual ~RetransmissionVisitor() {
+    }
 
-      virtual void OnRetransmission(QuicPacketNumber packet_number,
-          TransmissionType transmissionType, QuicTransmissionInfo* transmission_info) = 0;
+    virtual void OnRetransmission(QuicPacketNumber packet_number,
+        TransmissionType transmissionType,
+        QuicTransmissionInfo* transmission_info) = 0;
 
-      virtual QuicTransmissionInfo* GetTransmissionInfo(const QuicPacketDescriptor& packetDescriptor) = 0;
+    virtual QuicTransmissionInfo* GetTransmissionInfo(
+        const QuicPacketDescriptor& packetDescriptor) = 0;
 
-      virtual void RemoveRetransmittability(const QuicPacketDescriptor& packetDescriptor) = 0;
+    virtual void RemoveRetransmittability(
+        const QuicPacketDescriptor& packetDescriptor) = 0;
 
-      virtual QuicPacketNumber GetLargestObserved(const QuicSubflowDescriptor& subflowDescriptor) = 0;
+    virtual QuicPacketNumber GetLargestObserved(
+        const QuicSubflowDescriptor& subflowDescriptor) = 0;
 
-      virtual QuicPacketNumber GetLeastUnacked(const QuicSubflowDescriptor& subflowDesctriptor) = 0;
+    virtual QuicPacketNumber GetLeastUnacked(
+        const QuicSubflowDescriptor& subflowDesctriptor) = 0;
 
-      virtual void MarkNewestRetransmissionHandled(const QuicPacketDescriptor& packetDescriptor, QuicTime::Delta ack_delay_time) = 0;
+    virtual void MarkNewestRetransmissionHandled(
+        const QuicPacketDescriptor& packetDescriptor,
+        QuicTime::Delta ack_delay_time) = 0;
 
-      virtual bool IsPendingRetransmission(const QuicPacketDescriptor& packetDescriptor) = 0;
+    virtual bool IsPendingRetransmission(
+        const QuicPacketDescriptor& packetDescriptor) = 0;
   };
 
-  QuicSentPacketManager(Perspective perspective,
-                        const QuicClock* clock,
-                        QuicConnectionStats* stats,
-                        CongestionControlType congestion_control_type,
-                        LossDetectionType loss_type,
-                        QuicSubflowDescriptor descriptor,
-                        MultipathSendAlgorithmInterface* sendAlgorithm,
-                        LoggingDelegate* loggingDelegate);
+  QuicSentPacketManager(Perspective perspective, const QuicClock* clock,
+      QuicConnectionStats* stats, CongestionControlType congestion_control_type,
+      LossDetectionType loss_type, QuicSubflowDescriptor descriptor,
+      MultipathSendAlgorithmInterface* sendAlgorithm, bool usePacing,
+      LoggingDelegate* loggingDelegate);
   ~QuicSentPacketManager() override;
 
-  void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* sendAlgorithm);
+  void SetMultipathSendAlgorithm(MultipathSendAlgorithmInterface* sendAlgorithm, bool usePacing);
 
   virtual void SetFromConfig(const QuicConfig& config);
 
   // This visitor is called whenever a non-crypto packet is about to be
   // scheduled as a retransmission. This allows for retransmissions on
   // different subflows.
-  void SetRetransmissionVisitor(RetransmissionVisitor* visitor) { retransmission_visitor_ = visitor; }
+  void SetRetransmissionVisitor(RetransmissionVisitor* visitor) {retransmission_visitor_ = visitor;}
 
   // Implement QuicUnackedPacketMap::RetransmissionVisitor
   void RemoveRetransmittability(QuicPacketNumber packetNumber) override;
@@ -217,10 +225,10 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   // the number of bytes sent and if they were retransmitted.  Returns true if
   // the sender should reset the retransmission timer.
   bool OnPacketSent(SerializedPacket* serialized_packet,
-                    QuicPacketDescriptor original_packet_descriptor,
-                    QuicTime sent_time,
-                    TransmissionType transmission_type,
-                    HasRetransmittableData has_retransmittable_data);
+      QuicPacketDescriptor original_packet_descriptor,
+      QuicTime sent_time,
+      TransmissionType transmission_type,
+      HasRetransmittableData has_retransmittable_data);
 
   // Called when the retransmission timer expires.
   void OnRetransmissionTimeout();
@@ -303,6 +311,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
 
   const SendAlgorithmInterface* GetSendAlgorithm() const;
 
+  MultipathSendAlgorithmInterface* getMultipathSendAlgorithm();
+
   QuicPacketNumber largest_packet_peer_knows_is_acked() const {
     return largest_packet_peer_knows_is_acked_;
   }
@@ -320,9 +330,11 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   // Returns true if the rtt was updated.
   bool MaybeUpdateRTT(const QuicAckFrame& ack_frame, QuicTime ack_receive_time);
 
- private:
+private:
   friend class test::QuicConnectionPeer;
   friend class test::QuicSentPacketManagerPeer;
+
+  friend class QuicConnectionManager;
 
   // The retransmission timer is a single timer which switches modes depending
   // upon connection state.
@@ -342,7 +354,7 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   // Otherwise, the subflow descriptor describes the subflow where the retransmission originated
   // from.
   typedef QuicLinkedHashMap<QuicPacketDescriptor, TransmissionType>
-      PendingRetransmissionMap;
+  PendingRetransmissionMap;
 
   // Updates the least_packet_awaited_by_peer.
   void UpdatePacketInformationReceivedByPeer(const QuicAckFrame& ack_frame);
@@ -380,21 +392,21 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   // the event, although it can be the time at which loss detection was
   // triggered.
   void MaybeInvokeCongestionEvent(bool rtt_updated,
-                                  QuicByteCount prior_in_flight,
-                                  QuicTime event_time);
+      QuicByteCount prior_in_flight,
+      QuicTime event_time);
 
   // Removes the retransmittability and in flight properties from the packet at
   // |info| due to receipt by the peer.
   void MarkPacketHandled(QuicPacketNumber packet_number,
-                         QuicTransmissionInfo* info,
-                         QuicTime::Delta ack_delay_time,
-                         QuicTime ack_receive_time);
+      QuicTransmissionInfo* info,
+      QuicTime::Delta ack_delay_time,
+      QuicTime ack_receive_time);
 
   // Request that |packet_number| be retransmitted after the other pending
   // retransmissions.  Does not add it to the retransmissions if it's already
   // a pending retransmission.
   void MarkForRetransmission(QuicPacketNumber packet_number,
-                             TransmissionType transmission_type);
+      TransmissionType transmission_type);
 
   // Sets the send algorithm to the given congestion control type and points the
   // |send_algorithm_|. Takes ownership of |send_algorithm|. Can be called any
@@ -472,7 +484,7 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
 
   // Replaces certain calls to |send_algorithm_| when |using_pacing_| is true.
   // Calls into |send_algorithm_| for the underlying congestion control.
-  PacingSender pacing_sender_;
+  MultipathPacingSender pacing_sender_;
 
   // Set to true after the crypto handshake has successfully completed. After
   // this is true we no longer use HANDSHAKE_MODE, and further frames sent on
@@ -498,6 +510,6 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager : public QuicUnackedPacketMap::R
   DISALLOW_COPY_AND_ASSIGN(QuicSentPacketManager);
 };
 
-}  // namespace net
+} // namespace net
 
 #endif  // NET_QUIC_CORE_QUIC_SENT_PACKET_MANAGER_H_

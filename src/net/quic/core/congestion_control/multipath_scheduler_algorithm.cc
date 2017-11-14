@@ -38,7 +38,7 @@ std::list<QuicSubflowDescriptor> MultipathSchedulerAlgorithm::GetSubflowPriority
     std::sort(p.begin(), p.end(),
         [](const SubflowWithRtt& a, const SubflowWithRtt& b) {return a.GetSmoothedRtt() < b.GetSmoothedRtt();});
   } else { // round robin
-    size_t index = AdvanceIndex();
+    size_t index = current_index_;
     p.insert(p.end(), subflow_descriptors_with_rtt_.begin() + index,
         subflow_descriptors_with_rtt_.end());
     p.insert(p.end(), subflow_descriptors_with_rtt_.begin(),

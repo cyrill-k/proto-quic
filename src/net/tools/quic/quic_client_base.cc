@@ -165,10 +165,8 @@ void QuicClientBase::StartConnect() {
       server_address(), helper(), alarm_factory(),
       writer,
       /* owns_writer= */ false, Perspective::IS_CLIENT, supported_versions(),
-      kInitialSubflowId, nullptr));
-  session_->connection_manager()->set_congestion_method(
-      multipath_configuration_.GetPacketSchedulingConfiguration(),
-      multipath_configuration_.GetAckSendingConfiguration());
+      kInitialSubflowId, nullptr, false));
+  session_->connection_manager()->set_multipath_configuration(multipath_configuration_);
 
   // Reset |writer()| after |session()| so that the old writer outlives the old
   // session.

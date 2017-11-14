@@ -21,6 +21,9 @@
 #include "net/quic/platform/api/quic_subflow_descriptor.h"
 #include "net/quic/core/quic_config.h"
 #include "net/quic/core/quic_unacked_packet_map.h"
+#include "net/quic/core/congestion_control/hybrid_slow_start.h"
+#include "net/quic/core/quic_multipath_configuration.h"
+#include "net/quic/core/congestion_control/prr_sender.h"
 
 namespace net {
 
@@ -48,17 +51,75 @@ public:
   // A sorted vector of packets.
   typedef std::vector<std::pair<QuicPacketNumber, QuicPacketLength>> CongestionVector;
   const QuicPacketLength max_frame_length = 1; //TODO(cyrill) get actual max frame length
+  const QuicByteCount kMaxBurstBytes = 3 * kDefaultTCPMSS;
+  const QuicByteCount kInitialCongestionWindowInBytes = kInitialCongestionWindow
+      * kDefaultTCPMSS;
+  //const float kRenoBeta = 0.7f;               // Reno backoff factor.
+  const float kRateBasedExtraCwnd = 1.5f; // CWND for rate based sending.
+
+  static bool rateBasedSending;
+  static bool noPrr;
+  static bool slowStartLargeReduction;
 
   enum SendReason {
     ENCRYPTED_TRANSMISSION, UNENCRYPTED_TRANSMISSION
   };
 
   MultipathSendAlgorithmInterface(MultipathSchedulerInterface* scheduler);
-
   virtual ~MultipathSendAlgorithmInterface();
 
+  // Configuration & creation
   virtual void AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
       RttStats* rttStats, QuicUnackedPacketMap* unackedPacketMap);
+  void SetPacketHandlingMethod(
+      QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod);
+  void setLoggingInterface(LoggingInterface* loggingInterface) {
+    logging_interface_ = loggingInterface;
+  }
+  /*void SetMaxTotalBandwidth(QuicBandwidth bandwidth, QuicSubflowDescriptor independentSubflow) {
+    max_total_bandwidth_ = bandwidth;
+    max_bandwidth_independent_subflow_ = independentSubflow;
+  }
+
+  // Pacing sender testing
+  QuicBandwidth GetMaxBandwidth(const QuicSubflowDescriptor& descriptor,
+      QuicByteCount bytes_in_flight) {
+    if(max_total_bandwidth_.IsZero()) {
+      QUIC_LOG(WARNING) << descriptor.ToString() << " max bandwidth = 0";
+      return QuicBandwidth::Infinite();
+    }
+    if(descriptor == max_bandwidth_independent_subflow_) {
+      QUIC_LOG(WARNING) << descriptor.ToString() << " is independent subflow => max bandwidth = inf";
+      return QuicBandwidth::Infinite();
+    } else {
+      QuicBandwidth minReducedBandwidth = QuicBandwidth::FromKBitsPerSecond(500);
+      QuicBandwidth independentFlowBandwidth = PacingRate(max_bandwidth_independent_subflow_, bytes_in_flight);
+      if(independentFlowBandwidth > max_total_bandwidth_ ||
+          max_total_bandwidth_ - independentFlowBandwidth < minReducedBandwidth) {
+        QUIC_LOG(WARNING) << descriptor.ToString() <<
+            "independent flow bandwith (" << independentFlowBandwidth <<
+            ") > max bandwidth(" << max_total_bandwidth_ <<
+            ") || max bandwidth - independent bandwidth < min bandwidth(" <<
+            minReducedBandwidth << ")";
+        return minReducedBandwidth;
+      } else {
+        QUIC_LOG(WARNING) << descriptor.ToString() <<
+            " max bandwidth = " << (max_total_bandwidth_ - independentFlowBandwidth).ToKBitsPerSecond();
+        return max_total_bandwidth_ - independentFlowBandwidth;
+      }
+    }
+  }*/
+
+  // SS & CA increase & decrease.
+  virtual void OnLoss(const QuicSubflowDescriptor& descriptor,
+      QuicPacketLength bytes_lost) = 0;
+  virtual void OnAck(const QuicSubflowDescriptor& descriptor,
+      QuicPacketLength bytes_acked) = 0;
+  virtual QuicByteCount CongestionWindowAfterPacketLoss(
+      const QuicSubflowDescriptor& descriptor) = 0;
+  virtual QuicByteCount CongestionWindowAfterPacketAck(
+      const QuicSubflowDescriptor& descriptor, QuicByteCount prior_in_flight,
+      QuicPacketLength length) = 0;
 
   virtual void SetFromConfig(const QuicConfig& config, Perspective perspective);
 
@@ -74,7 +135,7 @@ public:
   virtual void OnCongestionEvent(const QuicSubflowDescriptor& descriptor,
       bool rtt_updated, QuicByteCount prior_in_flight, QuicTime event_time,
       const CongestionVector& acked_packets,
-      const CongestionVector& lost_packets) = 0;
+      const CongestionVector& lost_packets);
 
   // Inform that we sent |bytes| to the wire, and if the packet is
   // retransmittable. Returns true if the packet should be tracked by the
@@ -85,12 +146,12 @@ public:
   virtual bool OnPacketSent(const QuicSubflowDescriptor& descriptor,
       QuicTime sent_time, QuicByteCount bytes_in_flight,
       QuicPacketNumber packet_number, QuicByteCount bytes,
-      HasRetransmittableData is_retransmittable) = 0;
+      HasRetransmittableData is_retransmittable);
 
   // Called when the retransmission timeout fires.  Neither OnPacketAbandoned
   // nor OnPacketLost will be called for these packets.
   virtual void OnRetransmissionTimeout(const QuicSubflowDescriptor& descriptor,
-      bool packets_retransmitted) = 0;
+      bool packets_retransmitted);
 
   // Called when connection migrates and cwnd needs to be reset.
   // Not used in multipath quic.
@@ -101,7 +162,8 @@ public:
       QuicTime now, QuicByteCount bytes_in_flight);
 
   // The pacing rate of the send algorithm.  May be zero if the rate is unknown.
-  virtual QuicBandwidth PacingRate(QuicByteCount bytes_in_flight) const;
+  virtual QuicBandwidth PacingRate(const QuicSubflowDescriptor& descriptor,
+      QuicByteCount bytes_in_flight) const;
 
   // What's the current estimated bandwidth in bytes per second.
   // Returns 0 when it does not have an estimate.
@@ -153,10 +215,15 @@ public:
   // for that.
   virtual void OnApplicationLimited(QuicByteCount bytes_in_flight);
 
+  // Multipath scheduling
+
   // The following functions return the descriptor of the subflow where a frame should
   // be sent on. If hint.IsInitialized() returns true it describes the subflow on which
   // we received the stream frame (used for returning crypto handshakes on the same subflow).
   // reason is used to determine if the frame is a crypto handshake message.
+  // After the frame was sent, SentOnSubflow() should be called.
+  // For GetNextRetransmissionSubflow(), after scheduling the retransmission, SentOnSubflow()
+  // should be called.
   virtual QuicSubflowDescriptor GetNextStreamFrameSubflow(QuicStreamId streamId,
       size_t length, const QuicSubflowDescriptor& hint, SendReason reason);
   // If hint.IsInitialized() returns true it describes the subflow which initiated sending
@@ -167,6 +234,8 @@ public:
   virtual QuicSubflowDescriptor GetNextRetransmissionSubflow(
       const QuicTransmissionInfo& transmission_info,
       const QuicSubflowDescriptor& hint);
+  virtual void SentOnSubflow(const QuicSubflowDescriptor& descriptor,
+      QuicPacketLength length);
 
   // Returns the additional subflows for which we should send ack frames on the subflow described by
   // packetSubflowDescriptor.
@@ -187,21 +256,53 @@ public:
       const QuicSubflowDescriptor& descriptor);
   EncryptionLevel GetEncryptionLevel(const QuicSubflowDescriptor& descriptor);
 
-  void setLoggingInterface(LoggingInterface* loggingInterface) {
-    logging_interface_ = loggingInterface;
-  }
+  // debugging purposes
+  void Log(const QuicSubflowDescriptor& descriptor, std::string s, bool forceLogging = false);
 
 protected:
   QuicSubflowDescriptor uninitialized_subflow_descriptor_;
 
+  // Congestion control
+  QuicByteCount GetMinimumCongestionWindow() const;
+  QuicByteCount GetMinimumSlowStartThreshold() const;
+  bool IsCwndLimited(const QuicSubflowDescriptor& descriptor,
+      QuicByteCount bytes_in_flight) const;
+  QuicByteCount ssthresh(const QuicSubflowDescriptor& descriptor) const;
+  QuicByteCount cwnd(const QuicSubflowDescriptor& descriptor) const;
+  QuicTime::Delta srtt(const QuicSubflowDescriptor& descriptor) const;
+  QuicTime::Delta MinRtt(const QuicSubflowDescriptor& descriptor) const;
+  QuicTime::Delta LatestRtt(const QuicSubflowDescriptor& descriptor) const;
+  QuicTime::Delta InitialRtt(const QuicSubflowDescriptor& descriptor) const;
+  HybridSlowStart GetHybridSlowStart(const QuicSubflowDescriptor& descriptor);
+  PrrSender Prr(const QuicSubflowDescriptor& descriptor);
+  QuicPacketNumber LargestSentPacketNumber(
+      const QuicSubflowDescriptor& descriptor) const;
+  void SetLargestSentPacketNumber(const QuicSubflowDescriptor& descriptor,
+      QuicPacketNumber packetNumber);
+  QuicPacketNumber LargestAckedPacketNumber(
+      const QuicSubflowDescriptor& descriptor) const;
+  void SetLargestAckedPacketNumber(const QuicSubflowDescriptor& descriptor,
+      QuicPacketNumber packetNumber);
+  QuicPacketNumber LargestSentAtLastCutback(
+      const QuicSubflowDescriptor& descriptor) const;
+  void SetLargestSentAtLastCutback(const QuicSubflowDescriptor& descriptor,
+      QuicPacketNumber packetNumber);
+  bool LastCutbackExitedSlowstart(
+      const QuicSubflowDescriptor& descriptor) const;
+  void SetLastCutbackExitedSlowstart(const QuicSubflowDescriptor& descriptor,
+      bool val);
+  QuicByteCount MinSlowStartExitWindow(
+      const QuicSubflowDescriptor& descriptor) const;
+  void SetMinSlowStartExitWindow(const QuicSubflowDescriptor& descriptor,
+      QuicByteCount window);
+
+  // Multipath scheduling
   virtual bool FitsCongestionWindow(const QuicSubflowDescriptor& descriptor,
       QuicPacketLength length);
   virtual bool HasForwardSecureSubflow();
   virtual bool IsForwardSecure(const QuicSubflowDescriptor& descriptor);
   virtual bool IsInitialSecure(const QuicSubflowDescriptor& descriptor);
-  virtual void SentOnSubflow(const QuicSubflowDescriptor& descriptor,
-      QuicPacketLength length);
-  virtual bool GetNumberOfSubflows();
+  virtual bool GetNumberOfSubflows() const;
   // Returns the next subflow provided by the scheduler which has enough space in its
   // congestion window to send a packet of size |length|. If there is no such subflow,
   // it returns the next subflow with sufficient encryption even if there is not enough
@@ -212,21 +313,18 @@ protected:
   QuicSubflowDescriptor GetNextSubflow(QuicPacketLength length,
       bool allowInitialEncryption);
   virtual QuicSubflowDescriptor GetNextForwardSecureSubflow();
+  void ExitSlowstart(const QuicSubflowDescriptor& descriptor);
 
   enum SubflowCongestionState {
     SUBFLOW_CONGESTION_SLOWSTART, SUBFLOW_CONGESTION_RECOVERY
   };
 
   struct SubflowParameters {
-    SubflowParameters() {
-    }
-    SubflowParameters(RttStats* rttStats, QuicUnackedPacketMap* unackedPacketMap)
-        : rtt_stats(rttStats), unacked_packet_map(unackedPacketMap), congestion_window(
-            kInitialCongestionWindow * kDefaultTCPMSS), congestion_state(
-            SUBFLOW_CONGESTION_SLOWSTART), forward_secure_encryption_established(
-            false), encryption_level(ENCRYPTION_NONE), in_slow_start(false), ssthresh(
-            std::numeric_limits<QuicByteCount>::max()) {
-    }
+    SubflowParameters();
+    SubflowParameters(RttStats* rttStats,
+        QuicUnackedPacketMap* unackedPacketMap,
+        QuicByteCount initialCongestionWindow);
+    SubflowParameters(const SubflowParameters& other);
     RttStats* rtt_stats;
     QuicUnackedPacketMap* unacked_packet_map;
     QuicByteCount congestion_window;
@@ -235,6 +333,23 @@ protected:
     EncryptionLevel encryption_level;
     bool in_slow_start;
     QuicByteCount ssthresh;
+    HybridSlowStart hybrid_slow_start;
+    PrrSender prr;
+    // Track the largest packet that has been sent.
+    QuicPacketNumber largest_sent_packet_number;
+
+    // Track the largest packet that has been acked.
+    QuicPacketNumber largest_acked_packet_number;
+
+    // Track the largest packet number outstanding when a CWND cutback occurs.
+    QuicPacketNumber largest_sent_at_last_cutback;
+
+    // Whether the last loss event caused us to exit slowstart.
+    // Used for stats collection of slowstart_packets_lost
+    bool last_cutback_exited_slowstart;
+
+    // The minimum window when exiting slow start with large reduction.
+    QuicByteCount min_slow_start_exit_window;
   };
 
   std::map<QuicSubflowDescriptor, SubflowParameters> parameters_;
@@ -253,12 +368,37 @@ protected:
     return parameters_[descriptor];
   }
 
-  MultipathSchedulerInterface* GetScheduler() { return scheduler_.get(); }
+  MultipathSchedulerInterface* GetScheduler() {
+    return scheduler_.get();
+  }
+
+  // When true, use rate based sending instead of only sending if there's CWND.
+  bool rate_based_sending_;
+
+  // When true, use unity pacing instead of PRR.
+  bool no_prr_;
+
+  // When true, exit slow start with large cutback of congestion window.
+  bool slow_start_large_reduction_;
 
   LoggingInterface* logging_interface_;
 
 private:
   std::unique_ptr<MultipathSchedulerInterface> scheduler_;
+
+  // Used for testing only
+  QuicBandwidth max_total_bandwidth_;
+  QuicSubflowDescriptor max_bandwidth_independent_subflow_;
+
+  void setCwnd(const QuicSubflowDescriptor& descriptor, QuicByteCount newCwnd);
+  void setSsthresh(const QuicSubflowDescriptor& descriptor,
+      QuicByteCount newSsthresh);
+  void Ack(const QuicSubflowDescriptor& descriptor,
+      QuicPacketNumber packet_number, QuicByteCount bytes_acked,
+      QuicByteCount prior_in_flight);
+  void Loss(const QuicSubflowDescriptor& descriptor,
+      QuicPacketNumber packet_number, QuicByteCount bytes_lost,
+      QuicByteCount prior_in_flight);
 
   DISALLOW_COPY_AND_ASSIGN(MultipathSendAlgorithmInterface);
 };

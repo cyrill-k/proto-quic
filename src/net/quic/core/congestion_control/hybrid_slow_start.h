@@ -75,8 +75,6 @@ class QUIC_EXPORT_PRIVATE HybridSlowStart {
   QuicPacketNumber end_packet_number_;  // End of the receive round.
   uint32_t rtt_sample_count_;  // Number of rtt samples in the current round.
   QuicTime::Delta current_min_rtt_;  // The minimum rtt of current round.
-
-  DISALLOW_COPY_AND_ASSIGN(HybridSlowStart);
 };
 
 }  // namespace net

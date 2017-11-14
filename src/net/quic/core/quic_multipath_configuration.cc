@@ -8,7 +8,7 @@ namespace net {
 
 QuicMultipathConfiguration::QuicMultipathConfiguration()
     : QuicMultipathConfiguration(DEFAULT_PACKET_SCHEDULING,
-        DEFAULT_ACK_HANDLING) {
+        DEFAULT_ACK_HANDLING, true) {
 }
 
 QuicMultipathConfiguration::QuicMultipathConfiguration(
@@ -20,17 +20,19 @@ QuicMultipathConfiguration::QuicMultipathConfiguration(
 }
 
 QuicMultipathConfiguration::QuicMultipathConfiguration(
-    PacketScheduling packetScheduling, AckSending ackSending)
+    PacketScheduling packetScheduling, AckSending ackSending, bool usingPacing)
     : QuicMultipathConfiguration(packetScheduling, ackSending,
-        std::vector<unsigned int>(), QuicIpAddress()) {
+        std::vector<unsigned int>(), QuicIpAddress(), usingPacing) {
 
 }
 
 QuicMultipathConfiguration::QuicMultipathConfiguration(
     PacketScheduling packetScheduling, AckSending ackSending,
-    std::vector<unsigned int> clientPorts, QuicIpAddress clientIpAddress)
+    std::vector<unsigned int> clientPorts, QuicIpAddress clientIpAddress,
+    bool usingPacing)
     : packet_scheduling_(packetScheduling), ack_sending_(ackSending), client_ports_(
-        clientPorts), client_ip_address_(clientIpAddress) {
+        clientPorts), client_ip_address_(clientIpAddress), using_pacing_(
+        usingPacing) {
 
 }
 
@@ -40,21 +42,23 @@ QuicMultipathConfiguration::~QuicMultipathConfiguration() {
 
 QuicMultipathConfiguration QuicMultipathConfiguration::CreateClientConfiguration(
     PacketScheduling packetScheduling, AckSending ackSending,
-    std::vector<unsigned int> clientPorts) {
+    std::vector<unsigned int> clientPorts, bool usingPacing) {
   return QuicMultipathConfiguration::CreateClientConfiguration(packetScheduling,
-      ackSending, clientPorts, QuicIpAddress());
+      ackSending, clientPorts, QuicIpAddress(), usingPacing);
 }
 
 QuicMultipathConfiguration QuicMultipathConfiguration::CreateClientConfiguration(
     PacketScheduling packetScheduling, AckSending ackSending,
-    std::vector<unsigned int> clientPorts, QuicIpAddress clientIpAddress) {
+    std::vector<unsigned int> clientPorts, QuicIpAddress clientIpAddress,
+    bool usingPacing) {
   return QuicMultipathConfiguration(packetScheduling, ackSending, clientPorts,
-      clientIpAddress);
+      clientIpAddress, usingPacing);
 }
 
 QuicMultipathConfiguration QuicMultipathConfiguration::CreateServerConfiguration(
-    PacketScheduling packetScheduling, AckSending ackSending) {
-  return QuicMultipathConfiguration(packetScheduling, ackSending);
+    PacketScheduling packetScheduling, AckSending ackSending,
+    bool usingPacing) {
+  return QuicMultipathConfiguration(packetScheduling, ackSending, usingPacing);
 }
 
 } // namespace net

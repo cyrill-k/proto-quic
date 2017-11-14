@@ -82,6 +82,8 @@ class QUIC_EXPORT_PRIVATE QuicSession : public QuicConnectionManagerVisitorInter
 
   ~QuicSession() override;
 
+  void PrintSessionState();
+
   virtual void Initialize();
 
   // QuicConnectionManagerVisitorInterface methods:

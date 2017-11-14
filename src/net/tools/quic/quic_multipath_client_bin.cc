@@ -71,6 +71,9 @@
 #include "net/quic/core/quic_multipath_configuration.h"
 #include "net/quic/platform/api/quic_clock.h"
 #include "net/quic/core/quic_time.h"
+#include "net/quic/core/congestion_control/multipath_send_algorithm_interface.h"
+#include "net/quic/core/congestion_control/olia_send_algorithm.h"
+#include "net/quic/core/quic_bandwidth.h"
 
 using net::CertVerifier;
 using net::CTPolicyEnforcer;
@@ -94,6 +97,9 @@ using net::MultipathSchedulerAlgorithm;
 using net::QuicMultipathConfiguration;
 using net::QuicClock;
 using net::QuicTime;
+using net::MultipathSendAlgorithmInterface;
+using net::OliaSendAlgorithm;
+using net::QuicBandwidth;
 
 // The IP or hostname the quic client will connect to.
 string FLAGS_host = "";
@@ -237,7 +243,8 @@ int main(int argc, char* argv[]) {
             "--client-ports              List of client ports used: port0,port1,...\n"
             "--client-ip                 Specifiy the client ip\n"
             "--repetitions               The number of identical sequential http requests.\n"
-            "--subflows                  The number of subflows that should be created. At least 1.\n";
+            "--subflows                  The number of subflows that should be created. At least 1.\n"
+            "--disable-pacing            Disables pacing\n";;
     cout << help_str;
     exit(0);
   }
@@ -327,6 +334,7 @@ int main(int argc, char* argv[]) {
       std::cerr << "--repetitions must be an integer\n";
       return 1;
     }
+    std::cerr << "--repetitions=" << nRepetitions << std::endl;
   }
   int nSubflows = 1;
   if (line->HasSwitch("subflows")) {
@@ -335,14 +343,53 @@ int main(int argc, char* argv[]) {
         return 1;
       }
       if(nSubflows < 1) {
-        std::cerr << "--subflows need at least one subflow";
+        std::cerr << "--subflows need at least one subflow\n";
         return 1;
       }
+      std::cerr << "--subflows=" << nSubflows << std::endl;
     }
+  bool disablePacing = false;
+  if (line->HasSwitch("disable-pacing")) {
+    disablePacing = true;
+    std::cerr << "disable-pacing" << std::endl;
+  }
   QuicMultipathConfiguration mpConfig =
       QuicMultipathConfiguration::CreateClientConfiguration(
           packetSchedulingMethod, ackHandlingMethod, clientPorts,
-          clientIpAddress);
+          clientIpAddress, !disablePacing);
+  if(line->HasSwitch("disable-prr")) {
+    MultipathSendAlgorithmInterface::noPrr = true;
+    std::cerr << "disable-prr" << std::endl;
+  }
+  if(line->HasSwitch("enable-rate-based-sending")) {
+    MultipathSendAlgorithmInterface::rateBasedSending = true;
+    std::cerr << "enable-rate-based-sending" << std::endl;
+  }
+  if(line->HasSwitch("enable-slow-start-large-reduction")) {
+    MultipathSendAlgorithmInterface::slowStartLargeReduction = true;
+    std::cerr << "enable-slow-start-large-reduction" << std::endl;
+  }
+  if(line->HasSwitch("path-update-frequency")) {
+    int path_frequency;
+    if (!base::StringToInt(line->GetSwitchValueASCII("path-update-frequency"), &path_frequency)) {
+      std::cerr << "--determine-path-frequency must be an integer\n";
+      return 1;
+    }
+    OliaSendAlgorithm::pathUpdateFrequency = path_frequency;
+    std::cerr << "path-update-frequency=" << path_frequency << std::endl;
+  }
+  /*QuicBandwidth maxBandwidth = QuicBandwidth::Zero();
+  if(line->HasSwitch("max-bandwidth")) {
+    int b;
+    if (!base::StringToInt(line->GetSwitchValueASCII("max-bandwidth"), &b)) {
+      std::cerr << "--max-bandwidth must be an integer\n";
+      return 1;
+    }
+    maxBandwidth = QuicBandwidth::FromKBitsPerSecond(b);
+    QuicConnectionManager::MAX_BANDWIDTH = maxBandwidth;
+    std::cerr << "max-bandwidth=" << maxBandwidth.ToKBitsPerSecond() << "Kbps" << std::endl;
+  }*/
+
 
   VLOG(1)
       << "server host: " << FLAGS_host << " port: " << FLAGS_port << " body: "
@@ -350,7 +397,8 @@ int main(int argc, char* argv[]) {
           << FLAGS_quiet << " quic-version: " << FLAGS_quic_version
           << " version_mismatch_ok: " << FLAGS_version_mismatch_ok
           << " redirect_is_success: " << FLAGS_redirect_is_success
-          << " initial_mtu: " << FLAGS_initial_mtu;
+          << " initial_mtu: " << FLAGS_initial_mtu
+          << " url: " << urls[0];
 
   base::AtExitManager exit_manager;
   base::MessageLoopForIO message_loop;

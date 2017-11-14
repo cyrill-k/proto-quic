@@ -31,47 +31,27 @@ public:
   ~OliaSendAlgorithm()
 override  ;
 
-  const int kInitialRttMs = 100;
-  const double kMultiplicativeDecreaseFactor = 0.5;
-  const QuicByteCount kMaxBurstBytes = 3 * kDefaultTCPMSS;
+  static bool pathUpdateFrequency;
 
-  void OnCongestionEvent(
-      const QuicSubflowDescriptor& descriptor, bool rtt_updated,
-      QuicByteCount prior_in_flight, QuicTime event_time,
-      const CongestionVector& acked_packets,
-      const CongestionVector& lost_packets) override;
-
-  bool OnPacketSent(
-      const QuicSubflowDescriptor& descriptor, QuicTime sent_time,
-      QuicByteCount bytes_in_flight, QuicPacketNumber packet_number,
-      QuicByteCount bytes, HasRetransmittableData is_retransmittable) override;
-
-  void OnRetransmissionTimeout(const QuicSubflowDescriptor& descriptor,
-      bool packets_retransmitted) override;
+  const double kMultiplicativeDecreaseFactor = 0.7; //Like kRenoBeta
 
   void AddSubflow(const QuicSubflowDescriptor& subflowDescriptor,
       RttStats* rttStats, QuicUnackedPacketMap* unackedPacketMap) override;
 
-  void SetPacketHandlingMethod(QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod);
+  void OnLoss(const QuicSubflowDescriptor& descriptor, QuicPacketLength bytes_lost) override;
+  void OnAck(const QuicSubflowDescriptor& descriptor, QuicPacketLength bytes_acked) override;
+  QuicByteCount CongestionWindowAfterPacketLoss(const QuicSubflowDescriptor& descriptor) override;
+  QuicByteCount CongestionWindowAfterPacketAck(
+      const QuicSubflowDescriptor& descriptor, QuicByteCount prior_in_flight, QuicPacketLength length) override;
 
 private:
-  void Ack(const QuicSubflowDescriptor& descriptor, QuicPacketLength length, QuicByteCount priorInFlight);
-  void Loss(const QuicSubflowDescriptor& descriptor, QuicPacketLength length, QuicByteCount priorInFlight);
-  void AckSlowStart(const QuicSubflowDescriptor& descriptor,QuicByteCount prior_in_flight);
-  void AckCongestionAvoidance(const QuicSubflowDescriptor& descriptor, QuicPacketLength length, QuicByteCount prior_in_flight);
-  void LossCongestionAvoidance(const QuicSubflowDescriptor& descriptor, QuicPacketLength length);
-  QuicByteCount GetMaximumSegmentSize(const QuicSubflowDescriptor& descriptor);
-  QuicByteCount GetMinimumSlowStartThreshold(const QuicSubflowDescriptor& descriptor);
-  QuicByteCount GetMinimumCongestionWindow(const QuicSubflowDescriptor& descriptor);
-  QuicByteCount CongestionWindowAfterPacketLoss(const QuicSubflowDescriptor& descriptor, QuicByteCount currentCongestionWindow);
-  QuicByteCount& w(const QuicSubflowDescriptor& descriptor);
-  double rtt(const QuicSubflowDescriptor& descriptor);
   void DeterminePaths();
   QuicByteCount l(const QuicSubflowDescriptor& descriptor);
+  double rtt(const QuicSubflowDescriptor& descriptor) const;
   bool IsInMaxWPaths(const QuicSubflowDescriptor& descriptor);
   bool IsInCollectedPaths(const QuicSubflowDescriptor& descriptor);
   unsigned int NumberOfPaths();
-  bool IsCwndLimited(const QuicSubflowDescriptor& descriptor, QuicByteCount bytes_in_flight);
+  //void ExitSlowstart(const QuicSubflowDescriptor& descriptor);
 
   struct OliaSubflowParameters {
     OliaSubflowParameters() : l1r(0), l2r(0), id(current_id_++) {
@@ -92,6 +72,9 @@ private:
     DCHECK(TracksOliaDescriptor(descriptor));
     return olia_parameters_.at(descriptor);
   }
+
+  int packet_counter_;
+  int path_update_frequency_;
 
   DISALLOW_COPY_AND_ASSIGN(OliaSendAlgorithm);
 };

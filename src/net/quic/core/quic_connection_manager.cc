@@ -25,7 +25,7 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
         new QuicConnectionManagerLogger("test.out", connection->clock(), this)),
         resume_writes_alarm_(connection->alarm_factory()->CreateAlarm(
             new ResumeWritesAlarmDelegate(this))) {
-  connection->SetMultipathSendAlgorithm(GetSendAlgorithm());
+  connection->SetMultipathSendAlgorithm(GetSendAlgorithm(), multipath_send_algorithm_use_pacing_);
   AddConnection(connection->SubflowDescriptor(), kInitialSubflowId, connection);
   connection->set_visitor(this);
   connection->set_logging_visitor(logger_.get());
@@ -44,11 +44,28 @@ QuicConnectionManager::~QuicConnectionManager() {
   connections_.clear();
   unassigned_subflow_map_.clear();
 }
+//QuicBandwidth QuicConnectionManager::MAX_BANDWIDTH = QuicBandwidth::Zero();
+
+void QuicConnectionManager::PrintSessionState() {
+  for(QuicConnection* connection: GetAllConnections()) {
+    QUIC_LOG(WARNING) << connection->SubflowDescriptor().ToString() <<
+        " pending retransmissions = " << connection->sent_packet_manager().HasPendingRetransmissions() <<
+        " unacked packets = " << connection->GetSentPacketManager()->GetUnackedPacketMap()->HasUnackedPackets() <<
+        " queued packets = " << connection->NumQueuedPackets();
+    connection->GetSentPacketManager()->GetUnackedPacketMap()->PrintSessionState();
+    QUIC_LOG(WARNING) << " pending_timer_transmission_count_ = " << connection->GetSentPacketManager()->pending_timer_transmission_count_;
+  }
+}
+
+void QuicConnectionManager::set_multipath_configuration(const QuicMultipathConfiguration& config) {
+  set_congestion_method(config.GetPacketSchedulingConfiguration(), config.GetAckSendingConfiguration());
+  multipath_send_algorithm_use_pacing_ = config.GetUsingPacing();
+}
 
 void QuicConnectionManager::set_congestion_method(
     QuicMultipathConfiguration::PacketScheduling packetScheduling,
     QuicMultipathConfiguration::AckSending ackSending) {
-  static_cast<OliaSendAlgorithm*>(multipath_send_algorithm_.get())->SetPacketHandlingMethod(
+  static_cast<OliaSendAlgorithm*>(GetSendAlgorithm())->SetPacketHandlingMethod(
       packetScheduling);
   ack_sending_ = ackSending;
 }
@@ -120,11 +137,14 @@ QuicConsumedData QuicConnectionManager::SendStreamData(QuicStreamId id,
   const QuicSubflowDescriptor& descriptor =
       GetSendAlgorithm()->GetNextStreamFrameSubflow(id, iov.total_length, hint,
           reason);
-  p("Using subflow", descriptor);
+  //p("Using subflow", descriptor);
   QuicConsumedData cdata = GetConnection(descriptor)->SendStreamData(id, iov, offset, state,
       ack_listener);
+  if(cdata.bytes_consumed > 0 || cdata.fin_consumed) {
+    GetSendAlgorithm()->SentOnSubflow(descriptor, cdata.bytes_consumed);
+  }
 
-  QUIC_LOG(WARNING) << descriptor.ToString() << " consumed = " << cdata.bytes_consumed;
+  //QUIC_LOG(WARNING) << descriptor.ToString() << " consumed = " << cdata.bytes_consumed;
   return cdata;
 }
 
@@ -158,6 +178,7 @@ void QuicConnectionManager::SendRstStream(QuicStreamId id,
 
   // Sends RST_STREAM frame and removes any STREAM frame with stream id |id|.
   GetConnection(descriptor)->SendRstStream(id, error, bytes_written);
+  GetSendAlgorithm()->SentOnSubflow(descriptor, 0);
 
   // The following procedures are necessary to ensure the pending retransmissions
   // of all subflows are removed.
@@ -176,6 +197,7 @@ void QuicConnectionManager::SendBlocked(QuicStreamId id) {
   delete blockedFrame;
   p("Using subflow", descriptor);
   GetConnection(descriptor)->SendBlocked(id);
+  GetSendAlgorithm()->SentOnSubflow(descriptor, 0);
 }
 
 void QuicConnectionManager::SendWindowUpdate(QuicStreamId id,
@@ -189,6 +211,7 @@ void QuicConnectionManager::SendWindowUpdate(QuicStreamId id,
   delete windowUpdateFrame;
   p("Using subflow", descriptor);
   GetConnection(descriptor)->SendWindowUpdate(id, byte_offset);
+  GetSendAlgorithm()->SentOnSubflow(descriptor, 0);
 }
 
 void QuicConnectionManager::SendGoAway(QuicErrorCode error,
@@ -206,6 +229,7 @@ void QuicConnectionManager::SendGoAway(QuicErrorCode error,
   delete goAwayFrame;
   p("Using subflow", descriptor);
   GetConnection(descriptor)->SendGoAway(error, last_good_stream_id, reason);
+  GetSendAlgorithm()->SentOnSubflow(descriptor, 0);
 }
 
 void QuicConnectionManager::TryAddingSubflow(QuicSubflowDescriptor descriptor) {
@@ -259,12 +283,12 @@ void QuicConnectionManager::ProcessUdpPacket(
 }
 
 void QuicConnectionManager::OnHandshakeInitiated(QuicConnection* connection) {
-  multipath_send_algorithm_->InitialEncryptionEstablished(
+  GetSendAlgorithm()->InitialEncryptionEstablished(
       connection->SubflowDescriptor());
 }
 
 void QuicConnectionManager::OnHandshakeComplete(QuicConnection* connection) {
-  multipath_send_algorithm_->ForwardSecureEncryptionEstablished(
+  GetSendAlgorithm()->ForwardSecureEncryptionEstablished(
       connection->SubflowDescriptor());
 }
 
@@ -299,11 +323,16 @@ void QuicConnectionManager::OpenConnection(QuicSubflowDescriptor descriptor,
     SubflowDirection direction) {
   // Create new connection
   QuicConnection *connection = InitialConnection()->CloneToSubflow(descriptor,
-      GetPacketWriter(descriptor), false, 0, GetSendAlgorithm());
+      GetPacketWriter(descriptor), false, 0, GetSendAlgorithm(), multipath_send_algorithm_use_pacing_);
   connection->set_visitor(this);
   connection->set_logging_visitor(logger_.get());
   connection->SetSubflowState(QuicConnection::SUBFLOW_OPEN_INITIATED);
   AddUnassignedConnection(descriptor, connection);
+
+  /*// Testing purposes only
+  if(MAX_BANDWIDTH != QuicBandwidth::Zero()) {
+    GetSendAlgorithm()->SetMaxTotalBandwidth(MAX_BANDWIDTH, descriptor);
+  }*/
 
   if (direction == SUBFLOW_OUTGOING) {
     visitor_->StartCryptoConnect(connection);
@@ -677,7 +706,7 @@ QuicFrames QuicConnectionManager::GetUpdatedAckFrames(
         // Only add ACK frames from connections that have already established
         // a subflow (SUBFLOW_OPEN).
         const std::list<QuicSubflowDescriptor>& ackFrameSubflows =
-            multipath_send_algorithm_->AppendAckFrames(
+            GetSendAlgorithm()->AppendAckFrames(
                 connection->SubflowDescriptor());
 
         for (auto it = ackFrameSubflows.begin();
@@ -694,12 +723,12 @@ QuicFrames QuicConnectionManager::GetUpdatedAckFrames(
     }
   }
 
-  multipath_send_algorithm_->AckFramesAppended(usedSubflows);
+  GetSendAlgorithm()->AckFramesAppended(usedSubflows);
   return frames;
 }
 
 void QuicConnectionManager::OnAckFrameUpdated(QuicConnection* connection) {
-  multipath_send_algorithm_->OnAckFrameUpdated(connection->SubflowDescriptor());
+  GetSendAlgorithm()->OnAckFrameUpdated(connection->SubflowDescriptor());
 }
 
 QuicConnection* QuicConnectionManager::GetConnectionForNextStreamFrame() {
@@ -710,6 +739,10 @@ void QuicConnectionManager::SetResumeWritesAlarm() {
   if(!resume_writes_alarm_->IsSet()) {
     resume_writes_alarm_->Set(AnyConnection()->clock()->ApproximateNow());
   }
+}
+
+void QuicConnectionManager::LogSubflowStatus() {
+  PrintSessionState();
 }
 
 void QuicConnectionManager::ResumeWritesAlarmFired() {
@@ -731,11 +764,12 @@ void QuicConnectionManager::OnRetransmission(QuicConnection* connection,
     QuicTransmissionInfo* transmission_info) {
 
   const QuicSubflowDescriptor& descriptor =
-      multipath_send_algorithm_->GetNextRetransmissionSubflow(
+      GetSendAlgorithm()->GetNextRetransmissionSubflow(
           *transmission_info, connection->SubflowDescriptor());
-  QUIC_LOG(INFO) << "Retransmit from " << connection->SubflowDescriptor().ToString() << " on " << descriptor.ToString();
+  QUIC_LOG(WARNING) << "Retransmit from " << connection->SubflowDescriptor().ToString() << " on " << descriptor.ToString();
   GetConnection(descriptor)->RetransmitFrames(packetNumber, transmission_info,
       connection->SubflowDescriptor(), transmissionType);
+  GetSendAlgorithm()->SentOnSubflow(descriptor, transmission_info->bytes_sent);
 }
 
 QuicTransmissionInfo* QuicConnectionManager::GetTransmissionInfo(

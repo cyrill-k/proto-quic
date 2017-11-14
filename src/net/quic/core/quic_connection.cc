@@ -184,7 +184,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
                                bool owns_framer,
                                bool do_not_perform_handshake,
                                QuicSubflowId subflow_id,
-                               MultipathSendAlgorithmInterface* sendAlgorithm)
+                               MultipathSendAlgorithmInterface* sendAlgorithm,
+                               bool usePacing)
     : framer_(framer),
       owns_framer_(owns_framer),
       helper_(helper),
@@ -260,7 +261,7 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
       time_of_last_received_packet_(clock_->ApproximateNow()),
       time_of_last_sent_new_packet_(clock_->ApproximateNow()),
       last_send_for_timeout_(clock_->ApproximateNow()),
-      sent_packet_manager_(perspective, clock_, &stats_, kCubicBytes, kNack, QuicSubflowDescriptor(self_address,peer_address), sendAlgorithm, this),
+      sent_packet_manager_(perspective, clock_, &stats_, kCubicBytes, kNack, QuicSubflowDescriptor(self_address,peer_address), sendAlgorithm, usePacing, this),
       version_negotiation_state_(START_NEGOTIATION),
       perspective_(perspective),
       connected_(true),
@@ -329,7 +330,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
         perspective,
         supported_versions,
         kInitialSubflowId,
-        nullptr)
+        nullptr,
+        false)
 {
 }
 
@@ -343,7 +345,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
                                Perspective perspective,
                                const QuicVersionVector& supported_versions,
                                QuicSubflowId subflow_id,
-                               MultipathSendAlgorithmInterface* send_algorithm)
+                               MultipathSendAlgorithmInterface* send_algorithm,
+                               bool usePacing)
     : QuicConnection(connection_id,
         self_address,
         peer_address,
@@ -357,7 +360,8 @@ QuicConnection::QuicConnection(QuicConnectionId connection_id,
         /* owns_framer */ true,
         /* do_not_perform_handshake */ false,
         subflow_id,
-        send_algorithm)
+        send_algorithm,
+        usePacing)
 {
 }
 
@@ -376,7 +380,8 @@ QuicConnection *QuicConnection::CloneToSubflow(
     QuicPacketWriter *writer,
     bool owns_writer,
     QuicSubflowId subflowId,
-    MultipathSendAlgorithmInterface* sendAlgorithm) {
+    MultipathSendAlgorithmInterface* sendAlgorithm,
+    bool usePacing) {
   QuicFramer *framer = new QuicFramer(
       supported_versions(),
       helper_->GetClock()->ApproximateNow(),
@@ -396,7 +401,8 @@ QuicConnection *QuicConnection::CloneToSubflow(
       /* owns_framer */ true,
       /* do_not_perform_handshake */ true,
       subflowId,
-      sendAlgorithm);
+      sendAlgorithm,
+      usePacing);
 
   return connection;
 }
@@ -1447,6 +1453,8 @@ void QuicConnection::ProcessUdpPacket(const QuicSocketAddress& self_address,
 
   if(logging_packet_counter_++ % 100 == 0) {
     QUIC_LOG(WARNING) << SubflowDescriptor().ToString() << " [" << logging_packet_counter_ << "]: now - time pkt = " << std::abs((packet.receipt_time() - clock_->ApproximateNow()).ToMicroseconds());
+    QUIC_LOG(WARNING) << "in_flight = " << sent_packet_manager_.GetBytesInFlight();
+    sent_packet_manager_.getMultipathSendAlgorithm()->Log(SubflowDescriptor(), "process udp packet", true);
   }
   // Ensure the time coming from the packet reader is within a minute of now.
   if (std::abs((packet.receipt_time() - clock_->ApproximateNow()).ToSeconds()) >
@@ -1496,6 +1504,10 @@ void QuicConnection::RetransmitFrames(QuicPacketNumber oldPacketNumber,
     QuicSubflowDescriptor oldSubflow,
     TransmissionType transmissionType) {
   sent_packet_manager_.AddPendingRetransmission(oldPacketNumber, oldSubflow, transmissionType);
+  if(oldSubflow != SubflowDescriptor()) {
+    // This connection might not have a send_timer
+    send_alarm_->Update(clock_->ApproximateNow(), QuicTime::Delta::Zero());
+  }
 }
 
 void QuicConnection::OnCanWrite() {
@@ -2096,6 +2108,7 @@ void QuicConnection::SendAck() {
 
 void QuicConnection::OnRetransmissionTimeout() {
   DCHECK(sent_packet_manager_.HasUnackedPackets());
+  QUIC_LOG(WARNING) << "Retransmission timeout";
 
   if (close_connection_after_three_rtos_ &&
       sent_packet_manager_.GetConsecutiveRtoCount() >= 2 &&
@@ -2433,11 +2446,15 @@ void QuicConnection::SetPingAlarm() {
 
 void QuicConnection::SetRetransmissionAlarm() {
   if (delay_setting_retransmission_alarm_) {
+    QUIC_LOG(WARNING) << "Setting the retransmission alarm is is delayed";
     pending_retransmission_alarm_ = true;
     return;
   }
   QuicTime retransmission_time = sent_packet_manager_.GetRetransmissionTime();
-  QUIC_LOG(INFO) << "The retransmission alarm was set to: " <<retransmission_time.ToDebuggingValue();
+  QUIC_LOG(WARNING) << subflow_id_ << " The retransmission alarm was set to: " <<retransmission_time.ToDebuggingValue();
+  if(retransmission_time == QuicTime::Zero()) {
+    visitor_->LogSubflowStatus();
+  }
   retransmission_alarm_->Update(retransmission_time,
                                 QuicTime::Delta::FromMilliseconds(1));
 }

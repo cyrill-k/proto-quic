@@ -111,6 +111,13 @@ public:
   ~QuicConnectionManager()
 override  ;
 
+  // Only used for testing.
+  //static QuicBandwidth MAX_BANDWIDTH;
+
+  void PrintSessionState();
+
+  void set_multipath_configuration(const QuicMultipathConfiguration& config);
+
   void set_congestion_method(
       QuicMultipathConfiguration::PacketScheduling packetSchedulingMethod,
       QuicMultipathConfiguration::AckSending ackHandlingMethod);
@@ -253,6 +260,7 @@ override  ;
   void OnAckFrameUpdated(QuicConnection* connection) override;
   QuicConnection* GetConnectionForNextStreamFrame() override;
   void SetResumeWritesAlarm() override;
+  void LogSubflowStatus() override;
 
 private:
 
@@ -383,6 +391,8 @@ private:
   std::unique_ptr<QuicConnectionManagerLogger> logger_;
 
   std::unique_ptr<QuicAlarm> resume_writes_alarm_;
+
+  bool multipath_send_algorithm_use_pacing_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionManager);
 };

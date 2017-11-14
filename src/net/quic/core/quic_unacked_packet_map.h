@@ -35,6 +35,8 @@ class QUIC_EXPORT_PRIVATE QuicUnackedPacketMap {
   QuicUnackedPacketMap(RetransmissionVisitor* visitor);
   ~QuicUnackedPacketMap();
 
+  void PrintSessionState() const;
+
   // Adds |serialized_packet| to the map and marks it as sent at |sent_time|.
   // Marks the packet as in flight if |set_in_flight| is true.
   // Packets marked as in flight are expected to be marked as missing when they
