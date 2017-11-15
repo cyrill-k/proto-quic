@@ -2452,6 +2452,9 @@ void QuicConnection::SetRetransmissionAlarm() {
     return;
   }
   QuicTime retransmission_time = sent_packet_manager_.GetRetransmissionTime();
+  if(retransmission_time == QuicTime::Zero() && sent_packet_manager_.HasPendingRetransmissions()) {
+    send_alarm_->Update(clock_->ApproximateNow(), QuicTime::Delta::FromMilliseconds(2));
+  }
   QUIC_LOG(INFO) << subflow_id_ << " The retransmission alarm was set to: " <<retransmission_time.ToDebuggingValue();
   //visitor_->LogSubflowStatus();
   retransmission_alarm_->Update(retransmission_time,
