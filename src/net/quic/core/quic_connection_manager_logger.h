@@ -17,6 +17,8 @@ namespace net {
 class QUIC_EXPORT_PRIVATE QuicConnectionManagerLogger: public QuicConnectionLoggingInterface,
     public MultipathSendAlgorithmInterface::LoggingInterface {
 public:
+  static bool ENABLED;
+
   QuicConnectionManagerLogger(std::string logfile, const QuicClock* clock,
       QuicConnectionResolver* connectionResolver);
   ~QuicConnectionManagerLogger() override;
@@ -53,6 +55,8 @@ public:
           QuicTime::Delta newRtt) override;
 
   void OnSuccessfulHttpRequest(QuicTime::Delta requestDelta);
+
+  void WriteLog() override;
 
 private:
   struct Statistic {
@@ -102,6 +106,9 @@ private:
   QuicConnectionResolver* connection_resolver_;
 
   //NetLogWithSource net_log_;
+
+  std::vector<std::string> log_vector_;
+  bool log_written_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnectionManagerLogger);
 };

@@ -22,7 +22,8 @@ QuicConnectionManager::QuicConnectionManager(QuicConnection *connection)
         new OliaSendAlgorithm(
             new MultipathSchedulerAlgorithm(
                 QuicMultipathConfiguration::DEFAULT_PACKET_SCHEDULING))), logger_(
-        new QuicConnectionManagerLogger("test.out", connection->clock(), this)),
+                    QuicConnectionManagerLogger::ENABLED ?
+        new QuicConnectionManagerLogger("test.out", connection->clock(), this) : nullptr),
         resume_writes_alarm_(connection->alarm_factory()->CreateAlarm(
             new ResumeWritesAlarmDelegate(this))) {
   connection->SetMultipathSendAlgorithm(GetSendAlgorithm(), multipath_send_algorithm_use_pacing_);
@@ -72,7 +73,9 @@ void QuicConnectionManager::set_congestion_method(
 
 void QuicConnectionManager::LogSuccessfulHttpRequest(
     QuicTime::Delta requestDelta) {
-  logger_->OnSuccessfulHttpRequest(requestDelta);
+  if(logger_ != nullptr) {
+    logger_->OnSuccessfulHttpRequest(requestDelta);
+  }
 }
 
 void QuicConnectionManager::CloseConnection(QuicErrorCode error,
@@ -254,7 +257,7 @@ void QuicConnectionManager::ProcessUdpPacket(
     const QuicSocketAddress& peer_address, const QuicReceivedPacket& packet) {
   QuicSubflowDescriptor descriptor(self_address, peer_address);
 
-  std::string s;
+  /*std::string s;
   bool first = true;
   for (auto debugIt : subflow_id_map_) {
     s += (first ? "" : ", ") + std::to_string(debugIt.second);
@@ -262,7 +265,7 @@ void QuicConnectionManager::ProcessUdpPacket(
   }
   QUIC_LOG(INFO)
       << "ProcessUdpPacket(" << self_address.ToString() << ", "
-          << peer_address.ToString() << "), subflows: " << s;
+          << peer_address.ToString() << "), subflows: " << s;*/
 
   // subflow already established
   if (HasAssignedSubflow(descriptor)) {

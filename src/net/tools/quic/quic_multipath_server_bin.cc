@@ -24,12 +24,16 @@
 #include "net/quic/core/congestion_control/olia_send_algorithm.h"
 #include "net/quic/core/quic_bandwidth.h"
 #include "net/quic/core/quic_connection_manager.h"
+#include "net/quic/core/quic_connection.h"
+#include "net/quic/core/quic_connection_manager_logger.h"
 
 using net::QuicMultipathConfiguration;
 using net::MultipathSendAlgorithmInterface;
 using net::OliaSendAlgorithm;
 using net::QuicBandwidth;
 using net::QuicConnectionManager;
+using net::QuicConnection;
+using net::QuicConnectionManagerLogger;
 
 // The port the quic server will listen on.
 int32_t FLAGS_port = 6121;
@@ -65,7 +69,8 @@ int main(int argc, char* argv[]) {
         "--key_file=<file>           path to the pkcs8 private key\n"
         "--ack                       Ack handling method: simple, roundrobin or smallestrtt\n"
         "--pkt                       Packet scheduling method: roundrobin or smallestrtt\n"
-        "--disable-pacing            Disables pacing\n";
+        "--disable-pacing            Disables pacing\n"
+        "--logging-type              simple, extensive, full\n";
     std::cout << help_str;
     exit(0);
   }
@@ -152,6 +157,20 @@ int main(int argc, char* argv[]) {
     }
     OliaSendAlgorithm::pathUpdateFrequency = path_frequency;
     std::cerr << "path-update-frequency=" << path_frequency << std::endl;
+  }
+  if(line->HasSwitch("logging-type")) {
+    if(line->GetSwitchValueASCII("logging-type") == "simple") {
+      QuicConnection::LOG_STATS = true;
+      std::cerr << "enable logging simple connection stats" << std::endl;
+    } else if(line->GetSwitchValueASCII("logging-type") == "extensive") {
+      QuicConnectionManagerLogger::ENABLED = true;
+      std::cerr << "enable extensive logging" << std::endl;
+    } else if(line->GetSwitchValueASCII("logging-type") == "full") {
+      std::cerr << "enable logging simple connection stats" << std::endl;
+      std::cerr << "enable extensive logging" << std::endl;
+      QuicConnection::LOG_STATS = true;
+      QuicConnectionManagerLogger::ENABLED = true;
+    }
   }
   /*QuicBandwidth maxBandwidth = QuicBandwidth::Zero();
   if(line->HasSwitch("max-bandwidth")) {

@@ -244,6 +244,8 @@ class QUIC_EXPORT_PRIVATE QuicConnectionLoggingInterface {
   // A stream frame was received on this connection.
   virtual void OnStreamFrameReceived(QuicConnection* connection, QuicStreamId streamId,
       QuicByteCount length) = 0;
+
+  virtual void WriteLog() = 0;
 };
 
 // Interface which gets callbacks from the QuicConnection at interesting
@@ -413,6 +415,8 @@ class QUIC_EXPORT_PRIVATE QuicConnection
     // The subflow was successfully closed by both endpoints.
     SUBFLOW_CLOSED
   };
+
+  static bool LOG_STATS;
 
   // Constructs a new QuicConnection for |connection_id| and |address| using
   // |writer| to write packets. |owns_writer| specifies whether the connection
@@ -1361,6 +1365,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   QuicConnectionLoggingInterface* logging_interface_;
 
   unsigned int logging_packet_counter_;
+
+  std::vector<int64_t> packet_processing_times_;
+  std::vector<int64_t> queue_times_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnection);
 };

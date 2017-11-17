@@ -67,7 +67,7 @@ void MultipathSendAlgorithmInterface::OnCongestionEvent(
           GetCongestionWindow(descriptor) / kDefaultTCPMSS)) {
     ExitSlowstart(descriptor);
   }
-  if (rtt_updated) {
+  if (rtt_updated && logging_interface_ != nullptr) {
     logging_interface_->OnRttUpdated(descriptor, srtt(descriptor));
   }
 

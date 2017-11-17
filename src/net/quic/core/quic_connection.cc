@@ -168,6 +168,9 @@ class MtuDiscoveryAlarmDelegate : public QuicAlarm::Delegate {
 
 }  // namespace
 
+
+bool QuicConnection::LOG_STATS = false;
+
 #define ENDPOINT \
   (perspective_ == Perspective::IS_SERVER ? "Server: " : "Client: ")
 
@@ -373,6 +376,17 @@ QuicConnection::~QuicConnection() {
     delete framer_;
   }
   ClearQueuedPackets();
+  if(LOG_STATS) {
+    for(int64_t time: queue_times_) {
+      std::cout << "q=" << time << std::endl;
+    }
+    for(int64_t time: packet_processing_times_) {
+      std::cout << "p=" << time << std::endl;
+    }
+  }
+  if(logging_interface_ != nullptr) {
+    logging_interface_->WriteLog();
+  }
 }
 
 QuicConnection *QuicConnection::CloneToSubflow(
@@ -1433,6 +1447,13 @@ void QuicConnection::ProcessUdpPacket(const QuicSocketAddress& self_address,
   if (!connected_) {
     return;
   }
+
+  QuicTime tStart = QuicTime::Zero();
+  if(LOG_STATS) {
+    tStart = clock_->Now();
+    queue_times_.push_back((clock_->Now() - packet.receipt_time()).ToMicroseconds());
+  }
+
   if (debug_visitor_ != nullptr) {
     debug_visitor_->OnPacketReceived(self_address, peer_address, packet);
   }
@@ -1498,6 +1519,10 @@ void QuicConnection::ProcessUdpPacket(const QuicSocketAddress& self_address,
   MaybeSendInResponseToPacket();
   SetPingAlarm();
   current_packet_data_ = nullptr;
+
+  if(LOG_STATS) {
+    packet_processing_times_.push_back((clock_->Now()-tStart).ToMicroseconds());
+  }
 }
 
 void QuicConnection::RetransmitFrames(QuicPacketNumber oldPacketNumber,
@@ -2061,6 +2086,11 @@ void QuicConnection::SendOrQueuePacket(SerializedPacket* packet) {
     queued_packets_.push_back(*packet);
     packet->retransmittable_frames.clear();
   }
+
+  /*if(packet->transmission_type == RTO_RETRANSMISSION ||
+      packet->transmission_type == TLP_RETRANSMISSION) {
+    visitor_->SendOnOtherSubflow(this, packet->packet_number, packet->transmission_type);
+  }*/
 
   ClearSerializedPacket(packet);
 }

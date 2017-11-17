@@ -9,15 +9,19 @@
 
 namespace net {
 
+bool QuicConnectionManagerLogger::ENABLED = false;
+
 QuicConnectionManagerLogger::QuicConnectionManagerLogger(std::string logfile,
     const QuicClock* clock, QuicConnectionResolver* connectionResolver)
     : clock_(clock), start_time_(QuicTime::Zero()), last_interval_log_(
-        QuicTime::Zero()), connection_resolver_(connectionResolver) {
+        QuicTime::Zero()), connection_resolver_(connectionResolver),
+        log_written_(false) {
 
 }
 
 QuicConnectionManagerLogger::~QuicConnectionManagerLogger() {
   LogFullStatistic(clock_->Now());
+  WriteLog();
 }
 
 void QuicConnectionManagerLogger::OnPacketSent(QuicConnection* connection,
@@ -186,6 +190,15 @@ void QuicConnectionManagerLogger::OnSuccessfulHttpRequest(QuicTime::Delta reques
   RecordEvent(EVENT_SUCCESSFUL_HTTP_REQUEST, 0, s);
 }
 
+void QuicConnectionManagerLogger::WriteLog() {
+  if(!log_written_) {
+    for(const std::string& logMessage: log_vector_) {
+      std::cout << logMessage << std::endl;
+    }
+    log_written_ = true;
+  }
+}
+
 void QuicConnectionManagerLogger::RecordEvent(std::string eventType,
     QuicSubflowId id, std::string content) {
 
@@ -262,7 +275,30 @@ void QuicConnectionManagerLogger::LogFullStatistic(QuicTime t) {
 }
 
 void QuicConnectionManagerLogger::Log(std::string s) {
-  QUIC_LOG(WARNING) << s;
+
+  if(ENABLED) {
+    std::stringstream ss;
+    ss << "[0:";
+    timeval tv;
+    gettimeofday(&tv, nullptr);
+    time_t t = tv.tv_sec;
+    struct tm local_time;
+    localtime_r(&t, &local_time);
+    struct tm* tm_time = &local_time;
+    ss << std::setfill('0')
+            << std::setw(2) << 1 + tm_time->tm_mon
+            << std::setw(2) << tm_time->tm_mday
+            << '/'
+            << std::setw(2) << tm_time->tm_hour
+            << std::setw(2) << tm_time->tm_min
+            << std::setw(2) << tm_time->tm_sec
+            << '.'
+            << std::setw(6) << tv.tv_usec
+            << ':';
+    ss << "0:0(0)";
+    ss << s;
+    log_vector_.push_back(ss.str());
+  }
 }
 
 QuicConnectionManagerLogger::Statistic::Statistic()

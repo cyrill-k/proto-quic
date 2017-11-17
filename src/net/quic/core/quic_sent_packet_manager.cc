@@ -18,6 +18,7 @@
 #include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_map_util.h"
+#include "net/quic/core/quic_connection.h"
 
 namespace net {
 
@@ -77,6 +78,14 @@ QuicSentPacketManager::QuicSentPacketManager(Perspective perspective,
 }
 
 QuicSentPacketManager::~QuicSentPacketManager() {
+  if(QuicConnection::LOG_STATS) {
+    for(int64_t time: log_vector_0_) {
+      std::cout << "log0=" << time << std::endl;
+    }
+    for(int64_t time: log_vector_1_) {
+      std::cout << "log1=" << time << std::endl;
+    }
+  }
 }
 
 void QuicSentPacketManager::SetMultipathSendAlgorithm(
@@ -378,7 +387,14 @@ void QuicSentPacketManager::HandleAckForSentPackets(
             ack_delay_time, ack_receive_time - it->sent_time);
       }
     }
+    QuicTime t = QuicTime::Zero();
+    if(QuicConnection::LOG_STATS) {
+      t = clock_->Now();
+    }
     MarkPacketHandled(packet_number, &(*it), ack_delay_time, ack_receive_time);
+    if(QuicConnection::LOG_STATS) {
+      log_vector_0_.push_back((clock_->Now()-t).ToMicroseconds());
+    }
   }
 }
 
@@ -421,6 +437,11 @@ bool QuicSentPacketManager::MarkForRetransmission(
       unacked_packets_.GetTransmissionInfo(packet_number);
   QUIC_BUG_IF(transmission_info.retransmittable_frames.empty());
 
+  QuicTime t = QuicTime::Zero();
+  if(QuicConnection::LOG_STATS) {
+    t = clock_->Now();
+  }
+
   // Both TLP and the new RTO leave the packets in flight and let the loss
   // detection decide if packets are lost.
   if (transmission_type != TLP_RETRANSMISSION
@@ -434,8 +455,14 @@ bool QuicSentPacketManager::MarkForRetransmission(
     return false;
   }
 
-  return retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
+  bool retransmitOnThisSubflow = retransmission_visitor_->OnRetransmission(packet_number, transmission_type,
       unacked_packets_.GetMutableTransmissionInfo(packet_number));
+
+  if(QuicConnection::LOG_STATS) {
+    log_vector_1_.push_back((clock_->Now()-t).ToMicroseconds());
+  }
+
+  return retransmitOnThisSubflow;
 }
 
 void QuicSentPacketManager::RecordOneSpuriousRetransmission(

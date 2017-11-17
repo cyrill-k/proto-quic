@@ -507,6 +507,9 @@ private:
 
   std::map<QuicPacketNumber, QuicTime> sent_times_for_rtt_measurements_;
 
+  std::vector<int64_t> log_vector_0_;
+  std::vector<int64_t> log_vector_1_;
+
   DISALLOW_COPY_AND_ASSIGN(QuicSentPacketManager);
 };
 
